@@ -12,9 +12,10 @@
 
 - **현재 Phase**: **Phase 1 — DB 스키마·시드 기반 및 인증(`AUTH-1~3`) 1~5번 전 구간 구현 및 실행 검증 완료**
 - **직전 완료 Step**: Phase 1 — **5번 `AUTH-2-3`** (`d467c9d`, 내 설정 조회/변경, 로그아웃 정화 및 회원 탈퇴 `DELETE /api/v1/me`)
-- **현재 관문**: **Phase 1 타 LLM 적대적 리뷰(Adversarial Review) 및 테스트 대기**
+- **현재 관문**: **Phase 1 코드 적대적 리뷰 통과(2026-11-15, §5)** — 수정 커밋 `d145fe5`~`f70e77f`, 남은 기한부 결함 `DEF-019`(LIB-1 전)
 - **다음 착수 Phase / Step (리뷰 통과 후)**: **Phase 2 — 6번 `LIB-0` 공통 조회 엔진**부터(`LIB-0` → `LIB-1` → `LIB-2` → `LIB-3`, [계획 §3](상용_서비스_계획.md))
-- **문서 정합 리뷰(2026-11-15)**: 계획·02·05·06·규칙 문서를 적대적 리뷰해 고쳤다(§5 표, `DEF-007`~`DEF-012`). 코드는 건드리지 않았다
+- **문서 정합 리뷰(2026-11-15)**: 계획·02·05·06·규칙 문서를 적대적 리뷰해 고쳤다(§5 표, `DEF-007`~`DEF-012`, 커밋 `d97bc8f`)
+- **Phase 1 코드 리뷰(2026-11-15)**: `DEF-008`·`DEF-013`~`DEF-018` 수정, `DEF-019`·`DEF-020` 등록(§5, 하네스 §6)
 
 ---
 
@@ -68,7 +69,7 @@ Step·순서의 원본은 [상용 서비스 계획 §3](상용_서비스_계획.
 - **포함 파일 (16개, `AUTH-1_계약서.md` P4~P6 100% 일치)**:
   - `mobile/.env.example`, `mobile/app.json`, `mobile/package.json`, `mobile/package-lock.json`, `mobile/jest.config.js`, `mobile/app/_layout.tsx`, `mobile/app/index.tsx`, `mobile/app/login.tsx`, `mobile/src/auth/platform.ts`, `mobile/src/auth/supabase.ts`, `mobile/src/auth/apiFetch.ts`, `mobile/src/auth/AuthProvider.tsx`, `mobile/src/auth/__tests__/platform.test.ts`, `mobile/src/auth/__tests__/apiFetch.test.ts`, `mobile/src/auth/__tests__/AuthProvider.test.tsx`, `mobile/src/auth/__tests__/login.test.tsx`
 - **핵심 구현**:
-  - `platform.ts`: 5대 플랫폼 분기(세션 저장소 Web `localStorage` vs Native `expo-secure-store`, `detectSessionInUrl`, Google OAuth Web 리디렉트 vs Native PKCE 브라우저 코드 교환, Apple Sign-In iOS 네이티브 vs Web/Android 비노출, `AppState` 포그라운드 토큰 자동 갱신)
+  - `platform.ts`: 5대 플랫폼 분기(세션 저장소 Web `localStorage` vs Native `AsyncStorage`(계약 A8 — 2026-11-15 리뷰에서 "`expo-secure-store`"였던 오기를 바로잡음, `DEF-020`), `detectSessionInUrl`, Google OAuth Web 리디렉트 vs Native PKCE 브라우저 코드 교환, Apple Sign-In iOS 네이티브 vs Web/Android 비노출, `AppState` 포그라운드 토큰 자동 갱신)
   - `apiFetch.ts`: `401 AUTH_EXPIRED` 시 `refreshSession()` 1회 후 재전송, `401 AUTH_NOT_REGISTERED` 시 `rawRegisterSession` 1회 후 재전송(무한 루프 방지)
   - `AuthProvider.tsx`: `POST /api/v1/auth/session`이 `200`을 반환하기 전까지 `signedIn` 전환 금지(C7), 세대 카운터로 언마운트/레이스 방어
   - `login.tsx`: 후보 B(Forest & Cream) 시안 기반 로그인 화면, 진행 중 중복 탭 차단, 사용자 취소 시 에러 미표시
@@ -129,7 +130,9 @@ Step·순서의 원본은 [상용 서비스 계획 §3](상용_서비스_계획.
     (06 #7~#15. 대상: server/app/services/provider_engine.py, server/app/routers/books.py, server/app/routers/libraries.py,
      server/app/policy.py, server/tests/test_lib_engine.py 외 — 계획 §3 Phase 2 표와 §3.1 공통 완료 조건)
   - 착수 전 읽기: 02 §0 LIB-01~07·§9, 05 §3.1(libraries·books·availability_observations·popular_books_cache·provider_daily_usage)·§11, 06 §2.2·§3
-  - Phase 1 리뷰어가 함께 처리할 미해결 결함: DEF-008(철회 세션), DEF-010(마이그레이션 역이식 방식)
+  - Phase 1 리뷰(2026-11-15) 결과: DEF-008 구현 완료, DEF-010은 문서 가드(H-GIT-04)로 종결.
+    LIB-1 착수 전 처리: DEF-019(공용 디자인 토큰 모듈 + login.tsx 이전).
+    LIB-0부터 새 쓰기 엔드포인트는 트랜잭션 첫 SQL로 lock_active_user(H-ARCH-11).
 ```
 
 ---
@@ -138,5 +141,22 @@ Step·순서의 원본은 [상용 서비스 계획 §3](상용_서비스_계획.
 
 | Phase | 리뷰 수행 모델 / 일시 | 검토 범위 (커밋 구간) | 발견된 결함 (`DEF-ID`) | 조치 및 수정 커밋 | 최종 판정 |
 | :---: | :--- | :--- | :--- | :--- | :---: |
-| **Phase 1** | *(타 LLM 적대적 리뷰 대기)* | `9d766ee` ~ `d467c9d` (`AUTH-1-P2` ~ `AUTH-2-3`) | 구현 중 자체 포착: `DEF-001`~`DEF-006` | 하네스 규칙(`H-ENV`, `H-GIT`, `H-ARCH`) 반영 완료 | **리뷰 준비 완료** |
+| **Phase 1** | 구현: 이전 세션 / 리뷰: Claude Opus 5.5(`claude-opus-5-5`), 2026-11-15, mac — 구현과 다른 세션 | `9d766ee` ~ `d467c9d` (`AUTH-1-P2` ~ `AUTH-2-3`) | 구현 중 자체 포착 `DEF-001`~`006`. 리뷰: `DEF-008`(S2), `DEF-013`(S2), `DEF-014`(S2), `DEF-015`(S2), `DEF-016`(S3), `DEF-017`(S2), `DEF-018`(S2), `DEF-019`(S2), `DEF-020`(S3). S1 0건 | `d145fe5`(013·014), `83b5540`(008), `c309470`(015), `dbed0a0`(016), `eeffa04`(017), `f70e77f`(018), `1ba19f4`(06 §7 필드 표). `DEF-019`는 기한 `LIB-1` 착수 전 | **통과** (S1 0, S2는 수정 또는 기한) |
 | **문서(전 Phase)** | Claude(Fable 5.2) / 2026-11-15 — 문서만 정적 리뷰, 코드·테스트 실행 없음 | `CLAUDE.md`·`AGENTS.md`·`GEMINI.md`, `계획/*`, `개발산출물/02·05·06`, `인수인계_메모` | `DEF-007`(계획↔작업 기록 Step·순서 불일치와 의존 역전 3건), `DEF-008`(철회 세션 미검증), `DEF-009`(진입 파일 gitignore), `DEF-010`(M1·M2 마이그레이션 한 커밋), `DEF-011`(02↔06 패널티 자동 부과 모순), `DEF-012`(문서가 없는 기능·틀린 개수를 단정) | 문서 수정으로 조치: 계획 §3 재배열·공통 완료 조건, 02 §9 미결 처리표, 05 머리·§11, 06 #62~#72·오류 코드, 하네스 `H-GIT-04`·`H-DOC-*`·판정 기준·편차 목록. **코드 조치가 남은 것: `DEF-008`** | **문서 조치 완료 / Phase 1 코드 리뷰는 여전히 대기** |
+
+### Phase 1 코드 리뷰 상세 (2026-11-15, Claude Opus 5.5)
+
+- **실행한 명령과 결과**(리뷰어가 다시 실행):
+  - `docker compose up -d --wait db` → Healthy. `uv`는 PATH에 없어 `/tmp/uvenv/bin/uv`(H-ENV-01)
+  - `APP_ENV=test uv run alembic downgrade base` rc=0 → `upgrade head` rc=0 → `alembic current` = `0003 (head)`
+  - `APP_ENV=test uv run pytest -W error`: 리뷰 전 `69 passed` → 수정 후 `79 passed`
+  - `mobile`: `npx tsc --noEmit` 0오류, `npx jest --runInBand` 리뷰 전 `10 passed` → 수정 후 `12 passed`, `npx expo export --platform web` 성공(출력은 scratchpad, `dist` 미생성)
+- **§5 7항목 판정**:
+  1. 계약 대조: 커밋별 파일 = AUTH-1 계약서 P2(7)·P3(5)·P4+P5+P6(16) 목록과 일치. 등록 라우트 6개 = 06 #1~#6. C3·C6 화면 문구 8개 코드에 있음. `Platform.OS`는 `src/auth/platform.ts`에만. 06 §7 #2~#6 필드 표를 코드와 대조해 채움(`1ba19f4`). `detail` 형식 불일치 → `DEF-016`
+  2. 동시성: 설정 PATCH lost update 재현(radius 5→3) → `DEF-013`. 탈퇴와 쓰기 경쟁으로 탈퇴 계정에 `user_settings` 재생성 재현 → `DEF-014`. `POST /auth/session` 동시 등록은 기존 시험으로 1행 확인
+  3. 인증·격리: 무헤더·소문자 `bearer`·빈 Bearer·이중 공백·`role` 누락·`nbf` 미래·`sub` 비문자열 모두 계약 코드로 거부. 미등록 계정은 #4~#6 모두 401 `AUTH_NOT_REGISTERED`, 탈퇴 계정은 403. 철회 세션 미검증 → `DEF-008` 구현. 앱 `apiFetch` 토큰 유출 → `DEF-017`
+  4. 스키마·RLS·왕복: 왕복 rc=0, 28개 테이블 RLS·정책 0(기존 시험). `users` FK 21개 칸을 05 §11.1과 대조, `club_comments.delete_requested_by` 행 보강
+  5. 테스트 무결성: 변형 7개 중 3개 생존(팔로우 역방향 삭제 제거, 재동의 시각 유지 제거, 프로필 익명화 제거) → `DEF-015`로 보강 뒤 모두 실패 확인. 수정 시험(013·014·008·017·018)은 수정 전 코드에서 실패함을 확인
+  6. 문서 정합: 실제 컬럼 208개 중 05 본문에 이름이 없는 것 5개(`loan_plans.memo`, `loans.due_on_assumed`, `posts.image_kind`·`image_value`·`overlay_text` — 주니어 영역은 한글 골격 서술, 원본은 마이그레이션이라 S3 기록만). 작업 기록 §3의 저장소 오기 → `DEF-020`
+  7. 불변 조건·AC: 10개 조건 대조 — 색 토큰 하드코딩(`login.tsx`) → `DEF-019`. 나머지 Phase 1 해당 조건 충족. **미검증(통과로 세지 않음)**: AC-AUTH·AC-DELETE의 "기기 예약 알림" 부분(알림 기능 없음, `LOAN-1-2`), 업로드 파일 삭제(`LOCAL-1`), C4 실기기·실 Supabase 로그인(웹·Android·iOS), 운영 Supabase에서 서버 DB 계정의 `auth.sessions` SELECT 권한(`RELEASE-1`)
+
