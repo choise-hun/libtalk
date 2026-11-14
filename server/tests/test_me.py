@@ -97,6 +97,23 @@ def test_me_settings_default_and_patch(
         assert patch_radius.json()["return_stats_consent"] is True
         assert patch_radius.json()["return_stats_consent_at"] == first_consent_at
 
+        # 3-1. 이미 동의한 상태에서 다시 동의해도 처음 동의 시각을 유지(DEF-015)
+        with db_engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE user_settings SET return_stats_consent_at = "
+                    "'2026-01-02T03:04:05+09:00' WHERE user_id = :uid"
+                ),
+                {"uid": user_id},
+            )
+        patch_again = client.patch(
+            "/api/v1/me/settings",
+            headers=_auth(make_token, sub),
+            json={"return_stats_consent": True},
+        )
+        assert patch_again.status_code == 200
+        assert patch_again.json()["return_stats_consent_at"] == "2026-01-02T03:04:05+09:00"
+
         # 4. 반납 통계 동의 철회 시 consent_at 초기화
         patch_revoke = client.patch(
             "/api/v1/me/settings",
@@ -307,6 +324,15 @@ def test_delete_me_withdraws_and_isolates_other_user(
             ),
             {"a": user_a, "b": user_b},
         )
+        # 나를 건 팔로우도 지워져야 한다(DEF-015: 한쪽 방향만 지우는 변형이 통과하던 빈틈)
+        conn.execute(
+            text("INSERT INTO user_follows (follower_id, followee_id) VALUES (:b, :a)"),
+            {"a": user_a, "b": user_b},
+        )
+        conn.execute(
+            text("UPDATE user_profiles SET bio = '소개', avatar_url = 'a.png' WHERE user_id = :a"),
+            {"a": user_a},
+        )
 
     with _client(test_db_url, fake_jwks_client) as client:
         del_res = client.delete("/api/v1/me", headers=_auth(make_token, sub_a))
@@ -364,6 +390,17 @@ def test_delete_me_withdraws_and_isolates_other_user(
             {"uid": user_a},
         ).scalar_one()
         assert follow_cnt == 0
+
+        # 프로필 익명화(05 §11.1): A만 바뀌고 B는 그대로
+        profile_a = conn.execute(
+            text("SELECT nickname, bio, avatar_url FROM user_profiles WHERE user_id = :uid"),
+            {"uid": user_a},
+        ).one()
+        assert tuple(profile_a) == ("탈퇴한 이웃", None, None)
+        nickname_b = conn.execute(
+            text("SELECT nickname FROM user_profiles WHERE user_id = :uid"), {"uid": user_b}
+        ).scalar_one()
+        assert nickname_b == f"이웃-{sub_b[:4]}"
 
         # A의 공개 게시물과 방명록은 비노출 상태로 전환, B는 published 유지
         status_post_a = conn.execute(
