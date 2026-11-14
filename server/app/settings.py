@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     app_env: Literal["local", "test", "production"]
     database_url: str
     supabase_url: str = ""
+    # DEF-008: 토큰의 session_id가 Supabase auth.sessions에 살아 있는지 본다(로그아웃한 세션 거부).
+    # 시험 DB(postgres:17)에는 auth 스키마가 없어 local·test 기본값은 꺼 둔다. production은 필수
+    auth_session_check: bool = False
 
     @model_validator(mode="after")
     def _check_database_url(self) -> "Settings":
@@ -36,6 +39,8 @@ class Settings(BaseSettings):
             raise ValueError("APP_ENV=test에서는 localhost·127.0.0.1 DB만 쓸 수 있어요")
         if self.app_env == "production" and not self.supabase_url:
             raise ValueError("production에서는 SUPABASE_URL이 필요해요")
+        if self.app_env == "production" and not self.auth_session_check:
+            raise ValueError("production에서는 AUTH_SESSION_CHECK=true가 필요해요")
         return self
 
 

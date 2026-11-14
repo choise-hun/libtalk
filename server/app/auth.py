@@ -173,13 +173,42 @@ def ensure_user_profile_if_absent(conn: Connection, user_id: UUID) -> None:
     )
 
 
+def session_is_alive(conn: Connection, session_id: UUID, user_id: UUID) -> bool:
+    """Supabase는 로그아웃한 세션의 auth.sessions 행을 지운다. access JWT의 session_id = 그 행의 PK."""
+    return bool(
+        conn.execute(
+            text(
+                "SELECT EXISTS (SELECT 1 FROM auth.sessions WHERE id = :sid AND user_id = :uid)"
+            ),
+            {"sid": session_id, "uid": user_id},
+        ).scalar_one()
+    )
+
+
 async def get_current_user(request: Request) -> CurrentUser:
     user = await verify_access_token(request)
-    row = await run_db(request.app.state.engine, lambda c: select_user(c, user.id))
+    check_session = request.app.state.settings.auth_session_check
+    session_id: UUID | None = None
+    if check_session:
+        # DEF-008: 세션을 확인할 수 없는 토큰은 DB를 보기 전에 거부한다
+        if not isinstance(user.session_id, str):
+            raise ApiError(401, "AUTH_INVALID", MSG_INVALID)
+        session_id = parse_uuid_or_raise_invalid(user.session_id)
+
+    def tx(c: Connection) -> tuple[UserRow | None, bool]:
+        row = select_user(c, user.id)
+        if row is None or session_id is None:
+            return row, True
+        return row, session_is_alive(c, session_id, user.id)
+
+    row, alive = await run_db(request.app.state.engine, tx)
     if row is None:
         raise ApiError(401, "AUTH_NOT_REGISTERED", MSG_NOT_REGISTERED)
     if row.status != "active":
         raise ApiError(403, "ACCOUNT_WITHDRAWN", MSG_WITHDRAWN)
+    if not alive:
+        # 로그아웃·철회된 세션: 갱신으로 살릴 수 없으므로 AUTH_EXPIRED가 아니라 다시 로그인(#2)
+        raise ApiError(401, "AUTH_INVALID", MSG_INVALID)
     request.state.user_row = row
     return user
 

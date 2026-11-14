@@ -12,7 +12,8 @@ WEB_DEV_ORIGIN = "http://localhost:8081"  # Expo 웹 개발 서버 기본 출처
 
 def client(app_env: str) -> TestClient:
     settings = Settings(
-        app_env=app_env, database_url=DB, supabase_url="https://auth.example.test"
+        app_env=app_env, database_url=DB, supabase_url="https://auth.example.test",
+        auth_session_check=app_env == "production",  # production 필수값(DEF-008)
     )
     return TestClient(create_app(settings), raise_server_exceptions=False)
 

@@ -15,7 +15,7 @@
 | #26 "`sort=popular`는 열지 않는다" | 연다: `like_count DESC, published_at DESC, id DESC`(Q-31) |
 | #30 게시물 북마크 `미확인(임시)` | 그대로 구현(M1 호환 경로). #59의 `target_type=post`는 #30과 **같은 저장소(`post_bookmarks`)**를 쓴다 |
 | #9 "M1은 테마 표가 없어 항상 인기 도서" | `shelf_themes`의 활성 테마를 먼저 본다(02 §9 Q-47) |
-| §2.1 "철회된 세션의 쓰기 거부는 `session_id`로 확인" | 미구현(`DEF-008`, 02 §9) |
+| §2.1 "철회된 세션의 쓰기 거부는 `session_id`로 확인" | 구현(`DEF-008`): `get_current_user`가 JWT `session_id`(UUID)로 Supabase `auth.sessions` 행이 있는지 같은 DB 조회로 본다. 없거나(로그아웃·철회) `session_id`가 없으면 `401 AUTH_INVALID`. 읽기·쓰기 모두 거부, `POST /auth/session`은 토큰 검증만이라 대상 아님. `AUTH_SESSION_CHECK`는 production 필수(local·test 기본 꺼짐, 시험은 대역 `auth.sessions`) |
 | §2.5 "A는 M1에 자기 서버 엔드포인트가 없다" | M1 범위에서는 맞다. M2는 §2.6 |
 
 §2.6~§2.11의 M2 행은 전부 `기본값(Claude)`이다(본 레포에 대응 계약이 없다).
@@ -195,7 +195,7 @@ A는 M1에 자기 서버 엔드포인트가 없다. 지도 홈은 10번, 방문 
 | 코드 | HTTP | 언제 | 화면 문구(기본) | DB | 상태 |
 | --- | --- | --- | --- | --- | --- |
 | `AUTH_REQUIRED` | 401 | `Authorization` 헤더 없음·형식 다름 | "로그인이 필요해요." | 무변경 | `확정`(AUTH-1 초안) |
-| `AUTH_INVALID` | 401 | 서명·발급자·대상·역할·형식 불일치 | "로그인 정보를 확인하지 못했어요. 다시 로그인해 주세요." | 무변경 | `확정`(AUTH-1 초안) |
+| `AUTH_INVALID` | 401 | 서명·발급자·대상·역할·형식 불일치, 로그아웃·철회된 세션(`DEF-008`) | "로그인 정보를 확인하지 못했어요. 다시 로그인해 주세요." | 무변경 | `확정`(AUTH-1 초안) |
 | `AUTH_EXPIRED` | 401 | 토큰 만료 | 문구 없이 갱신 뒤 한 번 재시도 | 무변경 | `확정`(AUTH-1 초안) |
 | `AUTH_NOT_REGISTERED` | 401 | 토큰은 맞지만 `users` 행 없음 | 문구 없이 `POST /auth/session` 뒤 한 번 재시도 | 무변경 | `확정`(AUTH-1 초안) |
 | `ACCOUNT_WITHDRAWN` | 403 | 탈퇴한 계정 | "탈퇴한 계정이에요." | 무변경 | `기본값(Claude)`(AUTH-3이 다시 봄) |
