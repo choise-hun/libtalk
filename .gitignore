@@ -50,8 +50,6 @@ scratch/
 tmp/
 
 # 옛 협업 문서 보관 폴더 제외
-/AGENTS.md
-/GEMINI.md
 /AI간_협업_구조.md
 /개발산출물/완료/team_초안_20261110/
 

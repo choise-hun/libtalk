@@ -1,7 +1,21 @@
 # 05. ERD 및 DB 설계서 (단독 마스터 예비본: M1 + M2 전 범위 통합)
 
-> 상태: **M1(14개) + M2(12개) 총 26개 제품 테이블 통합 확정.**
-> **역이식 호환 원칙**: §1~§9의 M1 14개 테이블은 본 협업 레포(`axteamc/localone`)의 B0/B1 기준선과 이름·제약을 100% 동일하게 유지하며(`0001_users.py`, `0002_m1_core.py`), M2 확장 컬럼 및 M2 신규 테이블 12개는 §10(`0003_m2_extensions.py`)에 분리 정의한다. 모든 테이블에 `ENABLE ROW LEVEL SECURITY`(정책 없음)를 적용한다.
+> 상태: **M1(14개) + M2(14개) 총 28개 제품 테이블 통합 확정**(`0001`: 1개, `0002`: 13개, `0003`: 14개 + M1 테이블 확장 컬럼).
+> **역이식 호환 원칙**: §1~§9의 M1 14개 테이블은 본 협업 레포(`axteamc/localone`)의 B0/B1 기준선과 이름·제약을 100% 동일하게 유지하며(`0001_users.py`, `0002_m1_core.py`), M2 확장 컬럼 및 M2 신규 테이블 14개는 §10(`0003_m2_extensions.py`)에 분리 정의한다. 모든 테이블에 `ENABLE ROW LEVEL SECURITY`(정책 없음)를 적용한다.
+
+## 단독 예비본 우선 규칙 (2026-11-15)
+
+§0~§9는 본 레포 B0 기준선의 사본이다(역이식 때 대조하려고 문장을 그대로 둔다). 단독 예비본에서는 아래가 이긴다.
+
+| §0~§9의 문장 | 단독 예비본에서 |
+| --- | --- |
+| `미확인(임시)` + Q-번호 | §11 또는 [02 §9](02_요구사항_정의서.md)의 값으로 확정해 구현한다 |
+| 담당 A·B·C·D, "주니어 영역은 골격까지", "계약서가 정한다", `../team/…` | 효력 없음. 컬럼 세부의 원본은 **실제 마이그레이션(`0001~0003`)**이고 이 문서가 그것과 다르면 문서를 고친다 |
+| §3.1 "프로필 사진·한 줄 소개·팔로우는 M1 골격에 넣지 않는다", "도서관 룩은 M2라 컬럼을 두지 않는다", §3.2 "`posts`에 인기순용 컬럼을 넣지 않는다", "`post_bookmarks`는 게시물만" | M1 마이그레이션(`0002`)에는 여전히 없다. 예비본은 `0003`에서 더한다(§10.1·§10.2). 역이식 때는 하네스 §7 편차 2번 |
+| §0 "`ON DELETE`는 AUTH-3 계약서가 정하기 전까지 `NO ACTION`" | `users`를 가리키는 FK는 그대로 `NO ACTION`이다. 탈퇴는 행을 지우지 않고 `users.status = 'withdrawn'`으로 두며 정리는 서버 코드가 한다(§11 Q-23) |
+| §6 "최근 본 도서: 기기(최대 10개)" | 기기 저장은 맞고 개수는 **20권, 계정별 분리 키**([02 §9](02_요구사항_정의서.md)) |
+| §6 "서가 테마: M1에는 표가 없다" | `shelf_themes`가 있다(§10.2). 검색 추천(06 #9)도 활성 테마를 먼저 본다 |
+| §8 "순번은 머지 순서", §9 "계약서와 맞출 것" | 이 레포는 `0001~0003` 고정, 이후 변경은 `0004_…`(push된 파일 불변, `H-GIT-04`) |
 
 ## 0. 읽는 법
 
@@ -251,7 +265,7 @@ A(`library-visit`)는 M1에 자기 테이블이 없다. 지도·방문 페이지
 | `auth.md` AUTH-1(초안) | `users`는 같다. `user_profiles` 행을 `POST /auth/session`이 함께 만든다는 줄이 계약서에 없다(파트 1 금지 결정에 "닉네임 컬럼"이 있음) | D가 정한다: ① AUTH-1에 넣는다 ② LOCAL-1 전의 별도 파트로 둔다(추천 — AUTH-1 초안을 건드리지 않음) |
 | 이후 계약서 전부 | §3.4 표를 쓸 때 이 문서의 해당 행을 먼저 옮기고, 핵심 제약을 빼지 않는다 | `../team/templates/계약.md` 머리 문구(C-53) |
 
-## 10. M2 확장 스키마 (신규 테이블 12개 및 기존 테이블 확장 컬럼)
+## 10. M2 확장 스키마 (신규 테이블 14개 및 기존 테이블 확장 컬럼)
 
 본 레포(`axteamc/localone`)의 M1 마이그레이션과 충돌하지 않도록, 아래 확장은 `0003_m2_extensions.py` 마이그레이션에서 일괄 적용한다. 모든 신규 테이블에도 `ALTER TABLE ... ENABLE ROW LEVEL SECURITY;`(정책 없음)를 동일하게 적용한다.
 
@@ -267,7 +281,7 @@ A(`library-visit`)는 M1에 자기 테이블이 없다. 지도·방문 페이지
 | `posts` | `reading_log_id` | `uuid NULL REFERENCES reading_logs(id) ON DELETE SET NULL` | 원본 비공개 독서 기록 연결(응답 비노출) | LOCAL-07 |
 | `posts` | `like_count` | `integer NOT NULL DEFAULT 0 CHECK (like_count >= 0)` | 공감 수 캐시(인기순 정렬·상세 표시용) | LOCAL-06 |
 
-### 10.2 M2 신규 테이블 목록 (12개)
+### 10.2 M2 신규 테이블 목록 (14개, 전체 번호 15~28)
 
 | # | 테이블 | 목적 | 소유자 컬럼 | 핵심 컬럼 및 제약 | 요구사항 |
 | :---: | :--- | :--- | :--- | :--- | :--- |
@@ -280,7 +294,7 @@ A(`library-visit`)는 M1에 자기 테이블이 없다. 지도·방문 페이지
 | 21 | `club_participants` | 모임 참가 신청 및 출석 확인 상태 | `user_id` | `club_id uuid FK ON DELETE CASCADE`, `user_id uuid FK`, `status text NOT NULL DEFAULT 'registered' CHECK (status IN ('registered','cancelled','excluded'))`, `self_attended boolean NULL`, `host_attendance text NOT NULL DEFAULT 'pending' CHECK (host_attendance IN ('pending','attended','no_show'))`, `joined_at timestamptz`, `updated_at timestamptz`, **PK** (`club_id`, `user_id`) | CLUB-01~03 |
 | 22 | `club_comments` | 모임 일정/장소 협의 댓글 및 삭제 요청 상태 | `user_id` | `id uuid PK`, `club_id uuid NOT NULL FK ON DELETE CASCADE`, `user_id uuid NOT NULL FK`, `content text NOT NULL`, `status text NOT NULL DEFAULT 'visible' CHECK (status IN ('visible','deleted_by_author','hidden_by_admin'))`, `delete_requested_by uuid NULL FK`, `delete_request_reason text NULL`, `delete_request_status text NULL CHECK (delete_request_status IN ('pending','approved_delete','approved_restrict','rejected'))`, `created_at timestamptz` | CLUB-01, CLUB-03 |
 | 23 | `club_reviews` | 모임 종료 후 개인 비공개 후기 (공개 공유 시 별도 `posts` 생성) | `user_id` | `id uuid PK`, `club_id uuid NOT NULL FK ON DELETE CASCADE`, `user_id uuid NOT NULL FK`, `content text NOT NULL`, `shared_post_id uuid NULL REFERENCES posts(id) ON DELETE SET NULL`, `created_at timestamptz`, `updated_at timestamptz`, **UNIQUE** (`club_id`, `user_id`) | CLUB-02 |
-| 24 | `feed_bookmarks` | 통합 북마크 (게시물·방명록·모임·방문 스탬프 모두 저장) | `user_id` | `user_id uuid NOT NULL FK`, `target_type text NOT NULL CHECK (target_type IN ('post','guestbook','club','stamp'))`, `target_id uuid NOT NULL`, `library_id bigint NOT NULL FK`, `saved_at timestamptz NOT NULL DEFAULT now()`, **PK** (`user_id`, `target_type`, `target_id`). (`target_type='post'`일 때는 M1 호환을 위해 `post_bookmarks`와 동기화) | USR-03, USR-05, LOCAL-03 |
+| 24 | `feed_bookmarks` | 통합 북마크 (게시물·방명록·모임·방문 스탬프 모두 저장) | `user_id` | `user_id uuid NOT NULL FK`, `target_type text NOT NULL CHECK (target_type IN ('post','guestbook','club','stamp'))`, `target_id uuid NOT NULL`, `library_id bigint NOT NULL FK`, `saved_at timestamptz NOT NULL DEFAULT now()`, **PK** (`user_id`, `target_type`, `target_id`). **게시물 북마크의 쓰기 원본은 `post_bookmarks` 하나다**: `target_type='post'` 요청(06 #59)은 `post_bookmarks`에만 쓰고 `feed_bookmarks`에는 `guestbook`·`club`·`stamp`만 넣는다(이중 쓰기·동기화 없음, CHECK는 `post`를 허용하지만 쓰지 않는다). 모음 조회는 두 테이블을 `saved_at`으로 합친다. `target_id`는 FK가 없으므로 읽을 때 대상 테이블과 조인해 삭제·철회·숨김된 것을 걸러 낸다 | USR-03, USR-05, LOCAL-03 |
 | 25 | `user_follows` | 이웃 팔로우 관계 (팔로워 수·목록 비노출) | `follower_id` | `follower_id uuid NOT NULL FK`, `followee_id uuid NOT NULL FK`, `created_at timestamptz NOT NULL DEFAULT now()`, **PK** (`follower_id`, `followee_id`), **CHECK** (`follower_id <> followee_id`) | USR-04 |
 | 26 | `notifications` | 앱 내 알림함 (모임 확정/변경/취소/다음 모임/운영 처리) | `user_id` | `id uuid PK`, `user_id uuid NOT NULL FK`, `kind text NOT NULL CHECK (kind IN ('club_confirmed','club_changed','club_cancelled','club_ended','club_next','moderation','penalty'))`, `title text NOT NULL`, `body text NOT NULL`, `target_type text NULL`, `target_id text NULL`, `read_at timestamptz NULL`, `created_at timestamptz NOT NULL DEFAULT now()` | USR-06, CLUB-01~02 |
 | 27 | `moderation_reports` | 게시물·방명록·모임·댓글 신고 및 운영자 처리 기록 | `reporter_id` | `id uuid PK`, `reporter_id uuid NOT NULL FK`, `target_type text NOT NULL CHECK (target_type IN ('post','guestbook','club','club_comment'))`, `target_id uuid NOT NULL`, `reason text NOT NULL`, `status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','hidden','dismissed'))`, `admin_note text NULL`, `resolved_at timestamptz NULL`, `created_at timestamptz`, **UNIQUE** (`reporter_id`, `target_type`, `target_id`) | LOCAL-08, VISIT-03 |
@@ -296,8 +310,38 @@ A(`library-visit`)는 M1에 자기 테이블이 없다. 지도·방문 페이지
 | :--- | :--- | :--- |
 | **Q-18, Q-41, Q-42** | 외부 API(정보나루·네이버·예스24) 연동 및 한도 | 환경변수에 API 키가 있으면 실호출 + DB 캐시(`availability_observations`, `popular_books_cache`) 및 `provider_daily_usage` 상한을 적용하고, **키가 없거나 네트워크/호출 실패 시 내장 시드 데이터로 Fallback**하여 시연·테스트가 항상 동작하게 한다. |
 | **Q-21** | 같은 책 중복 대출 및 목록 페이지 크기 | 같은 책의 동시 `on_loan`은 1건으로 제한(`UNIQUE (user_id, book_id) WHERE status='on_loan'`). 커서 페이지 기본 `limit = 20`(최대 50). |
-| **Q-23** | 회원 탈퇴(`DELETE /api/v1/me`) 처리 범위 | `users.status = 'withdrawn'` 전환, 개인 전용 데이터(`loan_plans`, `loans`, `reading_logs`, `visit_stamps`, `post_bookmarks`, `feed_bookmarks`, `notifications`, `user_follows`) 즉시 삭제, 작성한 공개 `posts`·`guestbook_entries`는 `withdrawn`/`deleted` 상태로 전환해 즉시 비노출 처리. |
+| **Q-23** | 회원 탈퇴(`DELETE /api/v1/me`) 처리 범위 | 한 트랜잭션에서 아래 표대로 처리하고 `users.status = 'withdrawn'`으로 바꾼다(`users` 행은 남긴다 — 같은 토큰의 재가입 차단과 FK 유지). 백업 잔존·증거 보관 기간은 정하지 않았다(출시 관문). |
 | **Q-31** | 광장 피드·홈 인기글 기준 | `status = 'published'` 게시물 중 `like_count DESC, published_at DESC` 순. |
 | **Q-45, Q-49** | 방문 스탬프 공개 표시 및 반납 집계 최소 건수 | 방문 스탬프는 방문 페이지에서 `"다녀왔어요"`를 누르고 공개 여부를 선택할 때 기록. 도서관 반납 집계(`library_return_stats`)는 동의한 사용자의 반납 시 +1하며 도서관별 상위 9권을 오늘의 서가 첫 페이지에 노출(데이터가 없으면 인기 도서 탭을 먼저 노출). |
 | **Q-53** | 게시물 사진 업로드 저장소 | 개발·시연 환경은 `server/uploads/` 로컬 정적 서빙(`/api/v1/uploads/files/{filename}`), Pillow로 EXIF 메타데이터를 완전 제거 후 저장(최대 10MB, `jpeg`/`png`/`webp`). |
 | **Q-54, Q-55, Q-56** | 공개 범위·초기 닉네임·북마크 | 공개 피드는 방문자도 열람 가능. `POST /api/v1/auth/session` 시 `user_profiles`가 없으면 `이웃-${sub 앞 4자리}`로 자동 생성. 북마크는 M1 `post_bookmarks`와 M2 `feed_bookmarks`를 모두 지원. |
+
+### 11.1 탈퇴(Q-23) 테이블별 처리표
+
+`users`를 가리키는 FK가 있는 테이블은 전부 이 표에 있어야 한다(`H-ARCH-08`). "구현"이 `대기`인 행은 그 테이블에 행을 쓰기 시작하는 Step이 같은 커밋에서 `DELETE /api/v1/me`와 `test_me.py`에 더한다(계획 §3.1-2).
+
+| 테이블 | 처리 | 이유 | 구현 |
+| :--- | :--- | :--- | :---: |
+| `loans`, `loan_plans`, `reading_logs`, `visit_stamps`, `post_bookmarks`, `post_reactions`, `feed_bookmarks`, `notifications`, `user_settings` | 삭제 | 본인 전용 데이터 | 완료(`AUTH-2-3`) |
+| `user_follows` | 내가 건 것·나를 건 것 모두 삭제 | 관계 양쪽 정리 | 완료 |
+| `posts` | `status = 'withdrawn'` | 즉시 비노출, 이어 읽기·북마크 모음에서 숨김 | 완료 |
+| `guestbook_entries` | `status = 'deleted'` | 같음 | 완료 |
+| `user_profiles` | 닉네임 `탈퇴한 이웃`, `bio`·`avatar_url` NULL | 남은 모임·댓글의 작성자 표시용 | 완료 |
+| `posts.like_count` | 내 공감을 지울 때 해당 게시물의 `like_count`를 같이 줄인다 | 캐시 값 정합 | **대기(`LOCAL-2`)** — 지금은 공감을 쓰는 코드가 없어 영향 없음 |
+| `clubs`(내가 만든, 종료 전) | `status = 'cancelled'`, `cancel_reason = '만든 사람이 탈퇴했어요'`, 참가자에게 알림 | 주인 없는 모임 방지. 종료된 모임 기록은 남긴다 | 대기(`CLUB-1`) |
+| `club_participants` | 내 행 삭제 | 개인 참가 이력 | 대기(`CLUB-1`) |
+| `club_comments` | `status = 'deleted_by_author'` | 협의 흐름은 남기고 내용만 가림 | 대기(`CLUB-1`) |
+| `club_reviews` | 삭제(공유한 `posts`는 위 규칙으로 철회) | 본인 비공개 기록 | 대기(`CLUB-2`) |
+| `moderation_reports`(내가 신고한 것) | **보존** | 처리 증거. 신고자 id는 원래 비공개 | 대기(`LOCAL-4`) |
+| `user_penalties` | **보존** | 운영 기록. 탈퇴 계정은 어차피 로그인 불가 | 대기(`CLUB-2`) |
+| `library_return_stats` | 변화 없음 | user id가 없어 개별 삭제 불가(동의 문구에 명시, 02 §9) | — |
+| 업로드 파일(`server/uploads/`) | 내 사진·아바타 파일을 **트랜잭션 커밋 뒤** 지운다(실패해도 탈퇴는 성공, 로그만) | 외부 I/O는 트랜잭션 밖 | 대기(`LOCAL-1`, `AUTH-4`) |
+
+### 11.2 캐시·집계 값의 정합 규칙
+
+| 값 | 규칙 |
+| :--- | :--- |
+| `posts.like_count` | `post_reactions`의 INSERT/DELETE와 **같은 트랜잭션**에서 실제로 행이 바뀐 경우에만 ±1(`ON CONFLICT DO NOTHING … RETURNING`으로 판정). 응답의 공감 수는 이 컬럼을 쓴다. `RELEASE-1`에 `COUNT(*)`와 비교하는 테스트 |
+| `library_return_stats.return_count` | 반납 처리와 같은 트랜잭션에서 `INSERT … ON CONFLICT (library_id, book_id, returned_on) DO UPDATE SET return_count = library_return_stats.return_count + 1`. 반납을 되돌리는 기능은 없다 |
+| `provider_daily_usage.call_count` | 외부 호출 **전에** 원자적으로 +1하고 상한을 넘으면 호출하지 않는다(짧은 별도 트랜잭션, 외부 호출은 그 밖) |
+| 도서관 룩(`look_preset`) | 처음 배정한 값을 저장하고 자동으로는 다시 바꾸지 않는다. `look_is_manual = true`인 값은 자동 배정이 덮지 않는다 |

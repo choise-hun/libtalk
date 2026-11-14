@@ -13,7 +13,8 @@
 - **현재 Phase**: **Phase 1 — DB 스키마·시드 기반 및 인증(`AUTH-1~3`) 1~5번 전 구간 구현 및 실행 검증 완료**
 - **직전 완료 Step**: Phase 1 — **5번 `AUTH-2-3`** (`d467c9d`, 내 설정 조회/변경, 로그아웃 정화 및 회원 탈퇴 `DELETE /api/v1/me`)
 - **현재 관문**: **Phase 1 타 LLM 적대적 리뷰(Adversarial Review) 및 테스트 대기**
-- **다음 착수 Phase / Step (리뷰 통과 후)**: **Phase 2 — 조회 엔진(`LIB-1·2`), 빌릴 예정(`LIB-3`), 반납 비서(`LOAN-1·2`)** (6번 `LIB-1` 도서 검색·상세·추천/인기 도서·예스24 구매 링크부터 착수)
+- **다음 착수 Phase / Step (리뷰 통과 후)**: **Phase 2 — 6번 `LIB-0` 공통 조회 엔진**부터(`LIB-0` → `LIB-1` → `LIB-2` → `LIB-3`, [계획 §3](상용_서비스_계획.md))
+- **문서 정합 리뷰(2026-11-15)**: 계획·02·05·06·규칙 문서를 적대적 리뷰해 고쳤다(§5 표, `DEF-007`~`DEF-012`). 코드는 건드리지 않았다
 
 ---
 
@@ -31,12 +32,17 @@
 | 5 | `AUTH-2-3` | `feat(auth): AUTH-2·3 내 설정(반경·동의) 조회/변경, 로그아웃 정화 및 회원 탈퇴(DELETE /api/v1/me)` | **완료** | `d467c9d` | 백엔드 `pytest -W error` 69건 통과 + 모바일 `tsc`·`jest` 10건·`expo export --platform web` 통과 |
 
 ### Phase 2 ~ Phase 7 (대기)
-- **Phase 2 (`6~9번`)**: `LIB-1` → `LIB-2` → `LIB-3` → `LOAN-1-2`
-- **Phase 3 (`10~11번`)**: `LOCAL-1-2` → `VISIT-1-2`
-- **Phase 4 (`12~14번`)**: `READ-1-2` → `VISIT-3` → `VISIT-4`
-- **Phase 5 (`15~17번`)**: `CLUB-1` → `CLUB-2` → `CLUB-3`
-- **Phase 6 (`18~20번`)**: `AUTH-4` → `USR-4-6` → `LOCAL-4`
-- **Phase 7 (`21~25번`)**: `APP-NAV-THEME` → `APP-LIB-LOAN-UI` → `APP-VISIT-CLUB-UI` → `APP-SNS-ME-UI` → `E2E-HARDENING`
+
+Step·순서의 원본은 [상용 서비스 계획 §3](상용_서비스_계획.md)이다. 아래는 그 표의 요약이며 여기서 Step을 새로 만들지 않는다(2026-11-15 문서 리뷰에서 이 절이 계획과 다른 Step ID·순서를 적고 있던 것을 바로잡음, `DEF-007`).
+
+| Phase | 순서 | Step | 상태 |
+| :---: | :---: | :--- | :---: |
+| 2 (M1 조회) | 6~9 | `LIB-0` → `LIB-1` → `LIB-2` → `LIB-3` | 대기 |
+| 3 (M1 방문·광장) | 10~13 | `VISIT-1` → `VISIT-2` → `LOCAL-1` → `LOCAL-2` | 대기 |
+| 4 (M1 반납 비서, **M1 완결 관문**) | 14~15 | `LOAN-1-2` → `LOAN-3` | 대기 |
+| 5 (M2 방문 확장·기록) | 16~19 | `READ-1-2` → `VISIT-3` → `VISIT-4` → `LOCAL-3` | 대기 |
+| 6 (M2 모임·프로필·운영) | 20~23 | `CLUB-1` → `CLUB-2` → `AUTH-4` → `LOCAL-4` | 대기 |
+| 7 (통합·산출물) | 24~25 | `RELEASE-1` → `RELEASE-2` | 대기 |
 
 ---
 
@@ -50,7 +56,7 @@
 
 ### [Step 2] `AUTH-1-P3` — `POST /api/v1/auth/session` 및 `GET /api/v1/me` 구현
 - **커밋 SHA**: `661a0542c835d2d2911fbefbe8c2a659fb5ba634` (`661a054`)
-- **포함 파일 (5개, `AUTH-1_계약서.md` P2 100% 일치)**:
+- **포함 파일 (5개, `AUTH-1_계약서.md` P3 파트)**:
   - `server/app/auth.py`, `server/app/main.py`, `server/tests/test_auth_session.py`, `.env.example`, `.github/workflows/ci.yml`
 - **핵심 구현**:
   - `POST /api/v1/auth/session`: `INSERT INTO users (id) VALUES (:id) ON CONFLICT (id) DO NOTHING RETURNING id`로 멱등 등록(`is_new` 반환), 본문 `user_id` 완전 무시(C6), 탈퇴 계정 `403 ACCOUNT_WITHDRAWN` 차단
@@ -112,15 +118,18 @@
 
 중점 감사 포인트 (계획/하네스_엔지니어링_규칙.md §5):
   - AUTH-1_계약서.md P2 허용 파일 경계 및 C1~C7 계약 준수 여부
-  - 05_ERD_및_DB설계서.md의 28개 테이블 스키마·제약·RLS(정책 0개) 일치 여부
+  - 05_ERD_및_DB설계서.md의 28개 테이블(M1 14 + M2 14) 스키마·제약·RLS(정책 0개) 일치 여부
   - DELETE /api/v1/me 탈퇴 시 타인(User B) 데이터 격리(AC-ISOLATION) 및 본인 데이터 즉시 삭제(AC-DELETE) 완결성
   - 발견된 결함이 있으면 즉시 수정 후 아래 §5 표와 계획/하네스_엔지니어링_규칙.md §6(DEF-XXX)에 기록할 것.
 
 [Phase 2 착수 인계 (리뷰 통과 후 다음 세션 목표)]
 다음 작업 Phase / Step:
-  - Phase 2 (6번 LIB-1 -> 7번 LIB-2 -> 8번 LIB-3 -> 9번 LOAN-1-2)
-  - 첫 착수 Step: 6번 LIB-1 — feat(books): LIB-1 도서 검색(20건)·상세·추천/인기 도서·예스24 구매 링크 및 일일 쿼터 가드
-    (대상: server/app/providers/books.py, server/app/routers/books.py, server/tests/test_books.py)
+  - Phase 2 (6번 LIB-0 -> 7번 LIB-1 -> 8번 LIB-2 -> 9번 LIB-3)
+  - 첫 착수 Step: 6번 LIB-0 — feat(lib): LIB-0 도서·도서관·소장·인기도서 공통 조회 엔진(캐시·상한·시드 Fallback)
+    (06 #7~#15. 대상: server/app/services/provider_engine.py, server/app/routers/books.py, server/app/routers/libraries.py,
+     server/app/policy.py, server/tests/test_lib_engine.py 외 — 계획 §3 Phase 2 표와 §3.1 공통 완료 조건)
+  - 착수 전 읽기: 02 §0 LIB-01~07·§9, 05 §3.1(libraries·books·availability_observations·popular_books_cache·provider_daily_usage)·§11, 06 §2.2·§3
+  - Phase 1 리뷰어가 함께 처리할 미해결 결함: DEF-008(철회 세션), DEF-010(마이그레이션 역이식 방식)
 ```
 
 ---
@@ -130,3 +139,4 @@
 | Phase | 리뷰 수행 모델 / 일시 | 검토 범위 (커밋 구간) | 발견된 결함 (`DEF-ID`) | 조치 및 수정 커밋 | 최종 판정 |
 | :---: | :--- | :--- | :--- | :--- | :---: |
 | **Phase 1** | *(타 LLM 적대적 리뷰 대기)* | `9d766ee` ~ `d467c9d` (`AUTH-1-P2` ~ `AUTH-2-3`) | 구현 중 자체 포착: `DEF-001`~`DEF-006` | 하네스 규칙(`H-ENV`, `H-GIT`, `H-ARCH`) 반영 완료 | **리뷰 준비 완료** |
+| **문서(전 Phase)** | Claude(Fable 5.2) / 2026-11-15 — 문서만 정적 리뷰, 코드·테스트 실행 없음 | `CLAUDE.md`·`AGENTS.md`·`GEMINI.md`, `계획/*`, `개발산출물/02·05·06`, `인수인계_메모` | `DEF-007`(계획↔작업 기록 Step·순서 불일치와 의존 역전 3건), `DEF-008`(철회 세션 미검증), `DEF-009`(진입 파일 gitignore), `DEF-010`(M1·M2 마이그레이션 한 커밋), `DEF-011`(02↔06 패널티 자동 부과 모순), `DEF-012`(문서가 없는 기능·틀린 개수를 단정) | 문서 수정으로 조치: 계획 §3 재배열·공통 완료 조건, 02 §9 미결 처리표, 05 머리·§11, 06 #62~#72·오류 코드, 하네스 `H-GIT-04`·`H-DOC-*`·판정 기준·편차 목록. **코드 조치가 남은 것: `DEF-008`** | **문서 조치 완료 / Phase 1 코드 리뷰는 여전히 대기** |
