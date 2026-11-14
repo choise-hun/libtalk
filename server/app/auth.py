@@ -129,6 +129,20 @@ def select_user(conn: Connection, user_id: UUID) -> UserRow | None:
     return UserRow(id=row.id, status=row.status, created_at=row.created_at)
 
 
+def lock_active_user(conn: Connection, user_id: UUID) -> None:
+    """쓰기 트랜잭션의 첫 SQL. 탈퇴(행 잠금 후 상태 변경)와 직렬화해 탈퇴 뒤 쓰기를 막는다(DEF-014).
+
+    `get_current_user`의 확인은 별도 트랜잭션이라, 그 사이 커밋된 탈퇴를 이 잠금이 다시 본다.
+    """
+    status = conn.execute(
+        text("SELECT status FROM users WHERE id = :id FOR SHARE"), {"id": user_id}
+    ).scalar_one_or_none()
+    if status is None:
+        raise ApiError(401, "AUTH_NOT_REGISTERED", MSG_NOT_REGISTERED)
+    if status != "active":
+        raise ApiError(403, "ACCOUNT_WITHDRAWN", MSG_WITHDRAWN)
+
+
 def insert_user_if_absent(conn: Connection, user_id: UUID) -> bool:
     inserted = conn.execute(
         text("INSERT INTO users (id) VALUES (:id) ON CONFLICT (id) DO NOTHING RETURNING id"),

@@ -9,7 +9,12 @@ from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
-from app.auth import CurrentUser, get_current_user
+from app.auth import (
+    MSG_WITHDRAWN,
+    CurrentUser,
+    get_current_user,
+    lock_active_user,
+)
 from app.common import ApiError, now_kst
 from app.db import run_db
 
@@ -65,54 +70,44 @@ def upsert_user_settings(
     nearby_radius_km: int | None,
     return_stats_consent: bool | None,
 ) -> dict[str, Any]:
-    current = conn.execute(
-        text(
-            """
-            SELECT nearby_radius_km, return_stats_consent_at
-            FROM user_settings
-            WHERE user_id = :user_id
-            """
-        ),
-        {"user_id": user_id},
-    ).one_or_none()
-
-    now = now_kst()
-    next_radius = (
-        nearby_radius_km
-        if nearby_radius_km is not None
-        else (int(current.nearby_radius_km) if current is not None else DEFAULT_NEARBY_RADIUS_KM)
-    )
-
-    if return_stats_consent is not None:
-        if return_stats_consent:
-            if current is not None and current.return_stats_consent_at is not None:
-                next_consent_at = current.return_stats_consent_at
-            else:
-                next_consent_at = now
-        else:
-            next_consent_at = None
-    else:
-        next_consent_at = current.return_stats_consent_at if current is not None else None
-
+    lock_active_user(conn, user_id)
+    # DEF-013: 읽고-고쳐-쓰기를 하지 않는다. 보내지 않은 칸은 ON CONFLICT 갱신 시점의
+    # 최신 행 값(user_settings.*)을 그대로 두어, 동시에 다른 칸을 바꾼 요청을 덮지 않는다.
     row = conn.execute(
         text(
             """
             INSERT INTO user_settings (
                 user_id, nearby_radius_km, return_stats_consent_at, updated_at
             )
-            VALUES (:user_id, :nearby_radius_km, :return_stats_consent_at, :updated_at)
+            VALUES (
+                :user_id,
+                COALESCE(CAST(:radius AS integer), :default_radius),
+                CASE WHEN CAST(:consent AS boolean) THEN CAST(:now AS timestamptz) END,
+                CAST(:now AS timestamptz)
+            )
             ON CONFLICT (user_id) DO UPDATE SET
-                nearby_radius_km = EXCLUDED.nearby_radius_km,
-                return_stats_consent_at = EXCLUDED.return_stats_consent_at,
-                updated_at = EXCLUDED.updated_at
+                nearby_radius_km = COALESCE(
+                    CAST(:radius AS integer), user_settings.nearby_radius_km
+                ),
+                return_stats_consent_at = CASE
+                    WHEN CAST(:consent AS boolean) IS NULL
+                        THEN user_settings.return_stats_consent_at
+                    WHEN CAST(:consent AS boolean)
+                        THEN COALESCE(
+                            user_settings.return_stats_consent_at, CAST(:now AS timestamptz)
+                        )
+                    ELSE NULL
+                END,
+                updated_at = CAST(:now AS timestamptz)
             RETURNING nearby_radius_km, return_stats_consent_at, updated_at
             """
         ),
         {
             "user_id": user_id,
-            "nearby_radius_km": next_radius,
-            "return_stats_consent_at": next_consent_at,
-            "updated_at": now,
+            "radius": nearby_radius_km,
+            "default_radius": DEFAULT_NEARBY_RADIUS_KM,
+            "consent": return_stats_consent,
+            "now": now_kst(),
         },
     ).one()
 
@@ -126,6 +121,22 @@ def upsert_user_settings(
 
 def withdraw_user_account(conn: Connection, user_id: UUID) -> dict[str, Any]:
     now = now_kst()
+
+    # 0. 계정 상태를 먼저 바꿔 users 행을 잠근다(DEF-014). 동시에 들어온 쓰기(lock_active_user)는
+    #    이 커밋을 기다린 뒤 탈퇴 상태를 보고 거부되고, 두 번째 탈퇴 요청도 여기서 403이 된다.
+    withdrawn = conn.execute(
+        text(
+            """
+            UPDATE users
+            SET status = 'withdrawn'
+            WHERE id = :user_id AND status = 'active'
+            RETURNING id
+            """
+        ),
+        {"user_id": user_id},
+    ).one_or_none()
+    if withdrawn is None:
+        raise ApiError(403, "ACCOUNT_WITHDRAWN", MSG_WITHDRAWN)
 
     # 1. 공개 콘텐츠 비노출 상태 전환 (Q-23, AC-DELETE)
     conn.execute(
@@ -164,7 +175,7 @@ def withdraw_user_account(conn: Connection, user_id: UUID) -> dict[str, Any]:
     ):
         conn.execute(text(table_sql), {"user_id": user_id})
 
-    # 3. 프로필 익명화 및 계정 상태 withdrawn 전환
+    # 3. 프로필 익명화(계정 상태는 0에서 이미 바꿨다)
     conn.execute(
         text(
             """
@@ -174,16 +185,6 @@ def withdraw_user_account(conn: Connection, user_id: UUID) -> dict[str, Any]:
             """
         ),
         {"user_id": user_id, "nickname": WITHDRAWN_NICKNAME, "now": now},
-    )
-    conn.execute(
-        text(
-            """
-            UPDATE users
-            SET status = 'withdrawn'
-            WHERE id = :user_id
-            """
-        ),
-        {"user_id": user_id},
     )
 
     return {
