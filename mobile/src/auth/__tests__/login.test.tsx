@@ -44,6 +44,9 @@ const mockedIsAppleAvailable = jest.mocked(isAppleSignInAvailable);
 describe("LoginScreen (AUTH-1-P6)", () => {
   const signInWithGoogleMock = jest.fn<() => Promise<SignInResult>>();
   const signInWithAppleMock = jest.fn<() => Promise<SignInResult>>();
+  const signOutMock = jest.fn<() => Promise<void>>();
+  const withdrawAccountMock =
+    jest.fn<() => Promise<{ ok: boolean; errorMessage?: string }>>();
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -53,6 +56,8 @@ describe("LoginScreen (AUTH-1-P6)", () => {
       userId: null,
       signInWithGoogle: signInWithGoogleMock,
       signInWithApple: signInWithAppleMock,
+      signOut: signOutMock,
+      withdrawAccount: withdrawAccountMock,
     });
   });
 

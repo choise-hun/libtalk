@@ -137,6 +137,28 @@ def insert_user_if_absent(conn: Connection, user_id: UUID) -> bool:
     return inserted is not None
 
 
+def default_nickname_for_user(user_id: UUID) -> str:
+    return f"이웃-{str(user_id)[:4]}"
+
+
+def ensure_user_profile_if_absent(conn: Connection, user_id: UUID) -> None:
+    has_profile_table = conn.execute(
+        text("SELECT to_regclass('public.user_profiles') IS NOT NULL")
+    ).scalar_one()
+    if not has_profile_table:
+        return
+    conn.execute(
+        text(
+            """
+            INSERT INTO user_profiles (user_id, nickname)
+            VALUES (:user_id, :nickname)
+            ON CONFLICT (user_id) DO NOTHING
+            """
+        ),
+        {"user_id": user_id, "nickname": default_nickname_for_user(user_id)},
+    )
+
+
 async def get_current_user(request: Request) -> CurrentUser:
     user = await verify_access_token(request)
     row = await run_db(request.app.state.engine, lambda c: select_user(c, user.id))
@@ -156,6 +178,8 @@ async def create_session(
         inserted = insert_user_if_absent(c, user.id)
         row = select_user(c, user.id)
         assert row is not None
+        if row.status == "active":
+            ensure_user_profile_if_absent(c, user.id)
         return row, inserted
 
     row, is_new = await run_db(request.app.state.engine, tx)

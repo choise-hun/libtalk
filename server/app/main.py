@@ -14,6 +14,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.auth import JwksClient, build_jwks_client, router as auth_router
 from app.common import ApiError, error_response, now_kst
+from app.routers.me import router as me_router
 from app.settings import CORS_ENVS, LOCAL_ORIGIN_REGEX, Settings, get_settings
 
 logger = logging.getLogger("localone")
@@ -55,6 +56,7 @@ def create_app(
         return error_response(exc.status_code, exc.code, exc.message, exc.detail)
 
     app.include_router(auth_router)
+    app.include_router(me_router)
     # ── [/auth-D] ──
 
     if settings.app_env in CORS_ENVS:

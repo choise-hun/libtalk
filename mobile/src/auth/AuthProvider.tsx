@@ -7,7 +7,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { rawRegisterSession } from "./apiFetch";
+import { rawRegisterSession, requestAccountWithdrawal } from "./apiFetch";
 import {
   SignInResult,
   startAppleSignIn,
@@ -18,11 +18,35 @@ import { supabase } from "./supabase";
 
 export type AuthStatus = "loading" | "signedOut" | "signedIn";
 
+export type SignOutCleanupFn = () => void | Promise<void>;
+
+const signOutCleanups = new Set<SignOutCleanupFn>();
+
+export function registerSignOutCleanup(fn: SignOutCleanupFn): () => void {
+  signOutCleanups.add(fn);
+  return () => {
+    signOutCleanups.delete(fn);
+  };
+}
+
+async function runSignOutCleanups(): Promise<void> {
+  const tasks = Array.from(signOutCleanups).map(async (fn) => {
+    try {
+      await fn();
+    } catch {
+      // 개별 정리 콜백 오류가 전체 로그아웃을 막지 않도록 흡수
+    }
+  });
+  await Promise.all(tasks);
+}
+
 export interface AuthContextValue {
   status: AuthStatus;
   userId: string | null;
   signInWithGoogle: () => Promise<SignInResult>;
   signInWithApple: () => Promise<SignInResult>;
+  signOut: () => Promise<void>;
+  withdrawAccount: () => Promise<{ ok: boolean; errorMessage?: string }>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -205,14 +229,58 @@ export function AuthProvider({
     [completeProviderSignIn]
   );
 
+  const signOut = useCallback(async (): Promise<void> => {
+    generationRef.current += 1;
+    if (mountedRef.current) {
+      setUserId(null);
+      setStatus("signedOut");
+    }
+    await runSignOutCleanups();
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      // 로컬 세션 정리 실패 무시
+    }
+  }, []);
+
+  const withdrawAccount = useCallback(async (): Promise<{
+    ok: boolean;
+    errorMessage?: string;
+  }> => {
+    try {
+      const res = await requestAccountWithdrawal();
+      if (!res.ok) {
+        const errorMessage =
+          (await parseErrorMessage(res)) ?? "탈퇴 처리를 완료하지 못했어요.";
+        return { ok: false, errorMessage };
+      }
+      await signOut();
+      return { ok: true };
+    } catch {
+      return {
+        ok: false,
+        errorMessage: "서버에 연결하지 못했어요.",
+      };
+    }
+  }, [signOut]);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       status,
       userId,
       signInWithGoogle,
       signInWithApple,
+      signOut,
+      withdrawAccount,
     }),
-    [status, userId, signInWithGoogle, signInWithApple]
+    [
+      status,
+      userId,
+      signInWithGoogle,
+      signInWithApple,
+      signOut,
+      withdrawAccount,
+    ]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

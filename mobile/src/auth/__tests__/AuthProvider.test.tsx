@@ -2,13 +2,18 @@ import { beforeEach, describe, expect, jest, test } from "@jest/globals";
 import { act, render, waitFor } from "@testing-library/react-native";
 import React from "react";
 import { Text } from "react-native";
-import { AuthProvider, useAuth } from "../AuthProvider";
-import { rawRegisterSession } from "../apiFetch";
+import {
+  AuthProvider,
+  registerSignOutCleanup,
+  useAuth,
+} from "../AuthProvider";
+import { rawRegisterSession, requestAccountWithdrawal } from "../apiFetch";
 import { startGoogleSignIn, watchAppForeground } from "../platform";
 import { supabase } from "../supabase";
 
 jest.mock("../apiFetch", () => ({
   rawRegisterSession: jest.fn(),
+  requestAccountWithdrawal: jest.fn(),
 }));
 
 jest.mock("../platform", () => ({
@@ -22,15 +27,18 @@ jest.mock("../supabase", () => ({
     auth: {
       getSession: jest.fn(),
       onAuthStateChange: jest.fn(),
+      signOut: jest.fn(),
     },
   },
 }));
 
 const mockedRawRegisterSession = jest.mocked(rawRegisterSession);
+const mockedRequestAccountWithdrawal = jest.mocked(requestAccountWithdrawal);
 const mockedStartGoogleSignIn = jest.mocked(startGoogleSignIn);
 const mockedWatchAppForeground = jest.mocked(watchAppForeground);
 const mockedGetSession = jest.mocked(supabase.auth.getSession);
 const mockedOnAuthStateChange = jest.mocked(supabase.auth.onAuthStateChange);
+const mockedSignOut = jest.mocked(supabase.auth.signOut);
 
 function makeJsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -169,5 +177,61 @@ describe("AuthProvider registration gate (AUTH-1-P5)", () => {
     expect(loginRes?.ok).toBe(false);
     expect(view3.getByTestId("probe").props.children).toBe("signedOut:none");
     await view3.unmount();
+  });
+
+  test("signOut_and_withdrawAccount_purge_state_and_cleanups", async () => {
+    const uid = "00000000-0000-4000-8000-00000000000b";
+    mockedGetSession.mockResolvedValueOnce({
+      data: { session: { access_token: "tok-active" } as never },
+      error: null,
+    });
+    mockedRawRegisterSession.mockResolvedValueOnce(
+      makeJsonResponse(200, {
+        user_id: uid,
+        status: "active",
+        is_new: false,
+        created_at: "2026-11-15T00:00:00+09:00",
+      })
+    );
+    mockedSignOut.mockResolvedValue({ error: null });
+
+    const cleanupSpy = jest.fn<() => void>();
+    const unregister = registerSignOutCleanup(cleanupSpy);
+
+    let capturedCtx: ReturnType<typeof useAuth> | null = null;
+    const view = await render(
+      <AuthProvider>
+        <Probe
+          onReady={(ctx) => {
+            capturedCtx = ctx;
+          }}
+        />
+      </AuthProvider>
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId("probe").props.children).toBe(`signedIn:${uid}`);
+    });
+
+    mockedRequestAccountWithdrawal.mockResolvedValueOnce(
+      makeJsonResponse(200, {
+        user_id: uid,
+        status: "withdrawn",
+        withdrawn_at: "2026-11-15T01:00:00+09:00",
+      })
+    );
+
+    let withdrawRes: { ok: boolean; errorMessage?: string } | undefined;
+    await act(async () => {
+      withdrawRes = await capturedCtx!.withdrawAccount();
+    });
+
+    expect(withdrawRes?.ok).toBe(true);
+    expect(cleanupSpy).toHaveBeenCalledTimes(1);
+    expect(mockedSignOut).toHaveBeenCalledTimes(1);
+    expect(view.getByTestId("probe").props.children).toBe("signedOut:none");
+
+    unregister();
+    await view.unmount();
   });
 });

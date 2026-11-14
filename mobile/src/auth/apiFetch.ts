@@ -109,3 +109,37 @@ export async function apiFetch(
 
   return firstResponse;
 }
+
+export interface MySettings {
+  nearby_radius_km: 3 | 5;
+  return_stats_consent: boolean;
+  return_stats_consent_at: string | null;
+  updated_at: string | null;
+}
+
+export async function fetchMySettings(): Promise<MySettings> {
+  const res = await apiFetch("/api/v1/me/settings");
+  if (!res.ok) {
+    throw new Error("설정을 불러오지 못했어요.");
+  }
+  return (await res.json()) as MySettings;
+}
+
+export async function patchMySettings(patch: {
+  nearby_radius_km?: 3 | 5;
+  return_stats_consent?: boolean;
+}): Promise<MySettings> {
+  const res = await apiFetch("/api/v1/me/settings", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    throw new Error("설정을 저장하지 못했어요.");
+  }
+  return (await res.json()) as MySettings;
+}
+
+export async function requestAccountWithdrawal(): Promise<Response> {
+  return apiFetch("/api/v1/me", { method: "DELETE" });
+}
