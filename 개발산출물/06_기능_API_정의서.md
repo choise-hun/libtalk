@@ -246,6 +246,13 @@ Q-18(기준일·호출량), Q-19(알림 시각), Q-21(`limit`·중복 대출), Q
 
 | # | Step | 요청 | 응답(200) | 비고 |
 | :---: | :--- | :--- | :--- | :--- |
-| 2 | AUTH-1-P3, AUTH-2-3 | 본문 없음(본문의 `user_id`는 무시) | `user_id`, `is_new` 등 — **필드 전수는 Phase 1 코드 리뷰에서 `server/app/main.py`와 대조해 채운다** | `user_profiles` 자동 생성(하네스 §7 편차 3) |
-| 3~6 | AUTH-1-P3, AUTH-2-3 | — | 같음(대조 대기) | #4·#5의 `return_stats_consent`는 `return_stats_consent_at IS NOT NULL`에서 파생(`DEF-006`) |
+| 2 | AUTH-1-P3, AUTH-2-3 | 본문 없음(보내도 읽지 않음 — `user_id`를 보내도 무시) | `user_id`(str, UUID = 토큰 `sub`), `status`(`"active"`), `is_new`(bool, 이번 요청이 `users` 행을 만들었으면 `true`), `created_at`(str, `users.created_at`, ISO 8601 초 `+09:00`) | 인증은 토큰 검증만(`users` 행·세션 행 불필요). 활성 계정이면 같은 트랜잭션에서 `user_profiles`(닉네임 `이웃-<sub 앞 4자>`)를 없을 때만 만든다(하네스 §7 편차 3). 오류: 401 `AUTH_REQUIRED`·`AUTH_INVALID`·`AUTH_EXPIRED`, 403 `ACCOUNT_WITHDRAWN`, 503 `AUTH_UNAVAILABLE`·`DB_UNAVAILABLE` |
+| 3 | AUTH-1-P3 | — | `user_id`, `status`, `created_at`(#2와 같음, `is_new` 없음) | 오류: #2 + 401 `AUTH_NOT_REGISTERED` |
+| 4 | AUTH-2-3 | — | `nearby_radius_km`(int, `3`\|`5`), `return_stats_consent`(bool), `return_stats_consent_at`(str \| `null`, 처음 동의한 시각 `+09:00`), `updated_at`(str \| `null`) | `user_settings` 행이 없으면 DB에 쓰지 않고 `{3, false, null, null}`. `return_stats_consent`는 `return_stats_consent_at IS NOT NULL`에서 파생(`DEF-006`) |
+| 5 | AUTH-2-3 | JSON `{"nearby_radius_km"?: 3\|5, "return_stats_consent"?: bool}` — 둘 중 하나 이상(`null`은 보내지 않은 것과 같음). 정수·불리언 엄격(`"5"`·`true`를 반경으로 받지 않음), 모르는 필드 거부 | #4와 같은 4필드 | 보내지 않은 칸은 그대로(동시 요청도 서로 덮지 않음, `DEF-013`). 이미 동의한 상태의 재동의는 처음 시각 유지, `false`는 시각을 `null`로. 오류: 422 `VALIDATION_ERROR`(`detail`은 필드 이름, 여럿이면 쉼표 — 예: `"nearby_radius_km"`, 빈 본문은 `"nearby_radius_km,return_stats_consent"`, `DEF-016`) |
+| 6 | AUTH-2-3 | 본문 없음 | `user_id`(str), `status`(`"withdrawn"`), `withdrawn_at`(str, 처리 시각 `+09:00` — 응답에만 있고 저장 칸은 없다) | 한 트랜잭션에서 05 §11.1 표대로 처리. 이미 탈퇴했거나 동시에 들어온 두 번째 탈퇴는 403 `ACCOUNT_WITHDRAWN`(`DEF-014`) |
+
+- #3~#6 공통(`get_current_user`): `AUTH_SESSION_CHECK=true`(production 필수)이면 로그아웃·철회된 세션이나 `session_id`가 없는 토큰은 401 `AUTH_INVALID`(`DEF-008`). 쓰기(#5·#6)는 트랜잭션 첫 SQL에서 계정을 다시 잠가 확인한다(`DEF-014`).
+- 예시(#5): 요청 `{"nearby_radius_km": 5, "return_stats_consent": true}` → `200 {"nearby_radius_km": 5, "return_stats_consent": true, "return_stats_consent_at": "2026-11-15T10:00:00+09:00", "updated_at": "2026-11-15T10:00:00+09:00"}`
+- 대조 근거: `server/app/auth.py`(`create_session`·`get_me`·`get_current_user`), `server/app/routers/me.py`, `server/app/main.py`(검증 오류 처리기), 시험 `test_auth_session.py`·`test_me.py`·`test_me_concurrency.py`·`test_auth_revoked_session.py` (Phase 1 코드 리뷰 2026-11-15)
 

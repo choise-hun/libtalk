@@ -330,7 +330,7 @@ A(`library-visit`)는 M1에 자기 테이블이 없다. 지도·방문 페이지
 | `posts.like_count` | 내 공감을 지울 때 해당 게시물의 `like_count`를 같이 줄인다 | 캐시 값 정합 | **대기(`LOCAL-2`)** — 지금은 공감을 쓰는 코드가 없어 영향 없음 |
 | `clubs`(내가 만든, 종료 전) | `status = 'cancelled'`, `cancel_reason = '만든 사람이 탈퇴했어요'`, 참가자에게 알림 | 주인 없는 모임 방지. 종료된 모임 기록은 남긴다 | 대기(`CLUB-1`) |
 | `club_participants` | 내 행 삭제 | 개인 참가 이력 | 대기(`CLUB-1`) |
-| `club_comments` | `status = 'deleted_by_author'` | 협의 흐름은 남기고 내용만 가림 | 대기(`CLUB-1`) |
+| `club_comments` | `status = 'deleted_by_author'`. 내가 남의 댓글에 건 `delete_requested_by`는 그대로 둔다(운영 처리 증거, `moderation_reports`와 같은 이유) | 협의 흐름은 남기고 내용만 가림 | 대기(`CLUB-1`) |
 | `club_reviews` | 삭제(공유한 `posts`는 위 규칙으로 철회) | 본인 비공개 기록 | 대기(`CLUB-2`) |
 | `moderation_reports`(내가 신고한 것) | **보존** | 처리 증거. 신고자 id는 원래 비공개 | 대기(`LOCAL-4`) |
 | `user_penalties` | **보존** | 운영 기록. 탈퇴 계정은 어차피 로그인 불가 | 대기(`CLUB-2`) |
