@@ -90,7 +90,9 @@ def create_app(
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(request: Request, exc: RequestValidationError):
-        return error_response(422, "VALIDATION_ERROR", "요청 형식이 올바르지 않아요.")
+        # 06 §3: detail에 문제가 된 필드 이름(쉼표 구분). 본문 자체가 깨졌으면 "body"
+        fields = sorted({str(e["loc"][-1]) for e in exc.errors() if e.get("loc")})
+        return error_response(422, "VALIDATION_ERROR", "요청 형식이 올바르지 않아요.", ",".join(fields))
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception):

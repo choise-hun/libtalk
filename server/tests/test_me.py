@@ -132,6 +132,21 @@ def test_me_settings_default_and_patch(
         )
         assert bad_radius.status_code == 422
         assert bad_radius.json()["error"]["code"] == "VALIDATION_ERROR"
+        assert bad_radius.json()["error"]["detail"] == "nearby_radius_km"
+
+        # 타입이 틀린 값·모르는 필드도 detail에 필드 이름 문자열(DEF-016, 06 §3)
+        for body, field in (
+            ({"nearby_radius_km": "5"}, "nearby_radius_km"),
+            ({"return_stats_consent": "yes"}, "return_stats_consent"),
+            ({"user_id": "x"}, "user_id"),
+        ):
+            res = client.patch("/api/v1/me/settings", headers=_auth(make_token, sub), json=body)
+            assert res.status_code == 422
+            assert res.json()["error"] == {
+                "code": "VALIDATION_ERROR",
+                "message": "요청 형식이 올바르지 않아요.",
+                "detail": field,
+            }
 
         empty_patch = client.patch(
             "/api/v1/me/settings",
@@ -140,6 +155,7 @@ def test_me_settings_default_and_patch(
         )
         assert empty_patch.status_code == 422
         assert empty_patch.json()["error"]["code"] == "VALIDATION_ERROR"
+        assert empty_patch.json()["error"]["detail"] == "nearby_radius_km,return_stats_consent"
 
 
 def test_delete_me_withdraws_and_isolates_other_user(

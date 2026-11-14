@@ -215,7 +215,7 @@ async def patch_my_settings(
             422,
             "VALIDATION_ERROR",
             "요청 형식이 올바르지 않아요.",
-            {"fields": ["nearby_radius_km", "return_stats_consent"]},
+            "nearby_radius_km,return_stats_consent",
         )
     if (
         payload.nearby_radius_km is not None
@@ -225,7 +225,7 @@ async def patch_my_settings(
             422,
             "VALIDATION_ERROR",
             "요청 형식이 올바르지 않아요.",
-            {"field": "nearby_radius_km"},
+            "nearby_radius_km",
         )
     return await run_db(
         request.app.state.engine,
