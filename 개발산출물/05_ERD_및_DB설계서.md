@@ -1,8 +1,7 @@
-# 05. ERD 및 DB 설계서
+# 05. ERD 및 DB 설계서 (단독 마스터 예비본: M1 + M2 전 범위 통합)
 
-> 상태: **M1 테이블 골격 — 선행 설계 원본(2026-11-13, D 승인 방향 [C-53](스펙_변경_이력.md), 기준선 B0)**. 담당: D.
-> **이 문서가 M1 테이블의 존재·목적·관계·소유자 컬럼·핵심 제약·RLS 방침의 원본이다.** 기능별 계약서(`../team/contracts/<기능>.md` §3.4)는 여기서 정한 골격을 컬럼·타입·기본값·삭제 동작까지 구체화한다. 계약서가 이 문서와 달라져야 하면 **이 문서를 먼저 고치고**([스펙 변경 이력](스펙_변경_이력.md) 한 행) 계약서를 맞춘다. 지금 스키마의 사실은 마이그레이션 파일이다(아직 없음, 첫 마이그레이션은 AUTH-1 파트 1).
-> 입력: [04 도메인 모델](04_도메인_모델_정의서.md), [02 요구사항 §3·§4](02_요구사항_정의서.md), [모호점 해소 기록](모호점_해소_기록.md) "2026-11-13 계약 전 확인 답변", `../team/contracts/auth.md` AUTH-1(초안).
+> 상태: **M1(14개) + M2(12개) 총 26개 제품 테이블 통합 확정.**
+> **역이식 호환 원칙**: §1~§9의 M1 14개 테이블은 본 협업 레포(`axteamc/localone`)의 B0/B1 기준선과 이름·제약을 100% 동일하게 유지하며(`0001_users.py`, `0002_m1_core.py`), M2 확장 컬럼 및 M2 신규 테이블 12개는 §10(`0003_m2_extensions.py`)에 분리 정의한다. 모든 테이블에 `ENABLE ROW LEVEL SECURITY`(정책 없음)를 적용한다.
 
 ## 0. 읽는 법
 
@@ -252,27 +251,53 @@ A(`library-visit`)는 M1에 자기 테이블이 없다. 지도·방문 페이지
 | `auth.md` AUTH-1(초안) | `users`는 같다. `user_profiles` 행을 `POST /auth/session`이 함께 만든다는 줄이 계약서에 없다(파트 1 금지 결정에 "닉네임 컬럼"이 있음) | D가 정한다: ① AUTH-1에 넣는다 ② LOCAL-1 전의 별도 파트로 둔다(추천 — AUTH-1 초안을 건드리지 않음) |
 | 이후 계약서 전부 | §3.4 표를 쓸 때 이 문서의 해당 행을 먼저 옮기고, 핵심 제약을 빼지 않는다 | `../team/templates/계약.md` 머리 문구(C-53) |
 
-## 10. M1에 없는 것 (이름만)
+## 10. M2 확장 스키마 (신규 테이블 12개 및 기존 테이블 확장 컬럼)
 
-독서 기록, 방명록 글, 방문 스탬프, 모임·모임 참가·댓글·후기·참가 제한, 신고·운영 처리 기록, 팔로우, 알림함 항목, 서가 테마, 도서관 룩 — 04에 개념이 있고 M2 이후에 테이블을 정한다. 이 문서에 미리 넣지 않는다.
+본 레포(`axteamc/localone`)의 M1 마이그레이션과 충돌하지 않도록, 아래 확장은 `0003_m2_extensions.py` 마이그레이션에서 일괄 적용한다. 모든 신규 테이블에도 `ALTER TABLE ... ENABLE ROW LEVEL SECURITY;`(정책 없음)를 동일하게 적용한다.
 
-## 11. 미확인 모음 (이 문서에서 임시로 둔 것)
+### 10.1 기존 M1 테이블의 M2 확장 컬럼
 
-| Q | 무엇 | 임시로 둔 값 | 풀리면 고칠 곳 |
-| --- | --- | --- | --- |
-| Q-18 | 정보나루 기준일 필드 유무·`pageSize` 최대 | 기준일 없으면 전날로 추정하고 표시 | `availability_observations` |
-| Q-21 | 같은 책 중복 대출 기준 | 대출 중인 같은 책은 한 건 | `loans` 부분 UNIQUE |
-| Q-31 | 인기순 집계 기준 | 인기순용 컬럼·인덱스 없음 | `posts` |
-| Q-41 | 표지·구매 API 조건, 네이버 앱 상한 | 표지는 주소만 저장 | `books.cover_url`, `provider_daily_usage` |
-| Q-42 | 인기 도서 API 선택 | 캐시 표 모양만 | `popular_books_cache` |
-| Q-48 | 실시간 확인 주소 규칙 | 컬럼만 두고 비워 둠 | `libraries.isbn_search_url_template` |
-| Q-49 | 반납 집계 동의·재식별 방지 | 표와 동의 칸만, 쓰기 꺼 둠 | `library_return_stats`, `user_settings` |
-| Q-53 | 게시물 사진 저장소·용량·형식 | Supabase Storage에 올리고 DB에는 경로만(가정) | `posts` |
-| Q-54 | 파일럿 동안 게시물을 참여자에게만 보이는 방법 | 정하지 않음(공개 읽기 그대로) | §4, 06 인증 칸 |
-| Q-55 | M1 작성자 표시 이름(프로필 ID 없음) | 자동으로 만든 닉네임 하나 | `user_profiles` |
-| Q-56 | 북마크의 요구사항 ID·담당 | 게시물 저장·해제만 | `post_bookmarks` |
-| — | Supabase Postgres 메이저 | 17 가정 | 전체 |
+| 대상 테이블 | 추가 컬럼 | 타입·제약 | 설명 | 요구사항 |
+| :--- | :--- | :--- | :--- | :--- |
+| `users` | `role` | `text NOT NULL DEFAULT 'user' CHECK (role IN ('user','admin'))` | 운영자(`admin`) 권한 구분 | USR-01, LOCAL-08 |
+| `user_profiles` | `bio`, `avatar_url` | `text NULL` | 한 줄 소개(최대 150자), 프로필 사진 경로 | USR-03 |
+| `libraries` | `look_preset` | `text NOT NULL DEFAULT 'warm' CHECK (look_preset IN ('warm','toffee','oxford','modern'))` | 도서관 룩 프리셋 4종 (처음 배정값 고정) | VISIT-07 |
+| `libraries` | `look_is_manual` | `boolean NOT NULL DEFAULT false` | 운영자가 직접 지정(`modern` 등)했는지 여부 | VISIT-07 |
+| `posts` | `template_key` | `text NULL CHECK (template_key IN ('minimal','ink','warm_memo','classic'))` | 독서 기록 템플릿 종류 | LOCAL-07 |
+| `posts` | `reading_log_id` | `uuid NULL REFERENCES reading_logs(id) ON DELETE SET NULL` | 원본 비공개 독서 기록 연결(응답 비노출) | LOCAL-07 |
+| `posts` | `like_count` | `integer NOT NULL DEFAULT 0 CHECK (like_count >= 0)` | 공감 수 캐시(인기순 정렬·상세 표시용) | LOCAL-06 |
 
-## 12. 아직 쓰지 않은 것
+### 10.2 M2 신규 테이블 목록 (12개)
 
-검증 결과(제약 위반 거부 실행 로그), EXPLAIN 비교, 정규화·비정규화 근거 절은 테이블이 실제로 생긴 뒤에 채운다.
+| # | 테이블 | 목적 | 소유자 컬럼 | 핵심 컬럼 및 제약 | 요구사항 |
+| :---: | :--- | :--- | :--- | :--- | :--- |
+| 15 | `reading_logs` | 개인 비공개 독서 기록 및 도서관별 발자취 | `user_id` | `id uuid PK`, `user_id uuid FK`, `book_id bigint FK`, `library_id bigint NULL FK`(없으면 임의 보정 안 함), `loan_id uuid NULL FK`, `read_on date NOT NULL`, `content text NOT NULL`, `created_at timestamptz`, `updated_at timestamptz` | READ-01, READ-02 |
+| 16 | `guestbook_entries` | 도서관 방문 페이지 방명록 카드 | `user_id` | `id uuid PK`, `library_id bigint NOT NULL FK`, `user_id uuid NOT NULL FK`, `content text NOT NULL CHECK (char_length(content) BETWEEN 1 AND 300)`, `status text NOT NULL DEFAULT 'published' CHECK (status IN ('published','deleted','hidden'))`, `created_at timestamptz` | VISIT-03 |
+| 17 | `visit_stamps` | 도서관 "다녀왔어요" 일일 방문 스탬프 | `user_id` | `id uuid PK`, `library_id bigint NOT NULL FK`, `user_id uuid NOT NULL FK`, `visited_on date NOT NULL`(서버 KST), `is_public boolean NOT NULL DEFAULT false`, `created_at timestamptz`, **UNIQUE** (`user_id`, `library_id`, `visited_on`) | VISIT-05 |
+| 18 | `shelf_themes` | 오늘의 서가(책장) 및 검색 진입 추천 테마 | 없음(운영자) | `id bigint IDENTITY PK`, `library_id bigint NULL FK`(`NULL`이면 전국 공통 테마), `title text NOT NULL`, `description text NULL`, `starts_on date NOT NULL`, `ends_on date NOT NULL`, `is_active boolean NOT NULL DEFAULT true`, `created_at timestamptz`, **CHECK** (`ends_on >= starts_on`) | VISIT-04, LIB-01 |
+| 19 | `shelf_theme_books` | 테마별 소속 추천 도서 목록 | 없음(운영자) | `theme_id bigint FK ON DELETE CASCADE`, `book_id bigint FK`, `sort_order smallint NOT NULL`, **PK** (`theme_id`, `book_id`) | VISIT-04, LIB-01 |
+| 20 | `clubs` | 도서관 기반 회차별 작은 독서 모임 | `creator_id` (`users.id`) | `id uuid PK`, `library_id bigint NOT NULL FK`, `creator_id uuid NOT NULL FK`, `book_id bigint NULL FK`, `parent_club_id uuid NULL REFERENCES clubs(id)`(이전 회차), `title text NOT NULL`, `description text NULL`, `place_text text NULL`(미정 가능), `starts_at timestamptz NULL`(미정 가능), `ends_at timestamptz NULL`, `capacity smallint NULL CHECK (capacity IS NULL OR capacity >= 2)`, `status text NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed','cancelled','completed'))`, `cancel_reason text NULL`, `created_at timestamptz` | CLUB-01, CLUB-02 |
+| 21 | `club_participants` | 모임 참가 신청 및 출석 확인 상태 | `user_id` | `club_id uuid FK ON DELETE CASCADE`, `user_id uuid FK`, `status text NOT NULL DEFAULT 'registered' CHECK (status IN ('registered','cancelled','excluded'))`, `self_attended boolean NULL`, `host_attendance text NOT NULL DEFAULT 'pending' CHECK (host_attendance IN ('pending','attended','no_show'))`, `joined_at timestamptz`, `updated_at timestamptz`, **PK** (`club_id`, `user_id`) | CLUB-01~03 |
+| 22 | `club_comments` | 모임 일정/장소 협의 댓글 및 삭제 요청 상태 | `user_id` | `id uuid PK`, `club_id uuid NOT NULL FK ON DELETE CASCADE`, `user_id uuid NOT NULL FK`, `content text NOT NULL`, `status text NOT NULL DEFAULT 'visible' CHECK (status IN ('visible','deleted_by_author','hidden_by_admin'))`, `delete_requested_by uuid NULL FK`, `delete_request_reason text NULL`, `delete_request_status text NULL CHECK (delete_request_status IN ('pending','approved_delete','approved_restrict','rejected'))`, `created_at timestamptz` | CLUB-01, CLUB-03 |
+| 23 | `club_reviews` | 모임 종료 후 개인 비공개 후기 (공개 공유 시 별도 `posts` 생성) | `user_id` | `id uuid PK`, `club_id uuid NOT NULL FK ON DELETE CASCADE`, `user_id uuid NOT NULL FK`, `content text NOT NULL`, `shared_post_id uuid NULL REFERENCES posts(id) ON DELETE SET NULL`, `created_at timestamptz`, `updated_at timestamptz`, **UNIQUE** (`club_id`, `user_id`) | CLUB-02 |
+| 24 | `feed_bookmarks` | 통합 북마크 (게시물·방명록·모임·방문 스탬프 모두 저장) | `user_id` | `user_id uuid NOT NULL FK`, `target_type text NOT NULL CHECK (target_type IN ('post','guestbook','club','stamp'))`, `target_id uuid NOT NULL`, `library_id bigint NOT NULL FK`, `saved_at timestamptz NOT NULL DEFAULT now()`, **PK** (`user_id`, `target_type`, `target_id`). (`target_type='post'`일 때는 M1 호환을 위해 `post_bookmarks`와 동기화) | USR-03, USR-05, LOCAL-03 |
+| 25 | `user_follows` | 이웃 팔로우 관계 (팔로워 수·목록 비노출) | `follower_id` | `follower_id uuid NOT NULL FK`, `followee_id uuid NOT NULL FK`, `created_at timestamptz NOT NULL DEFAULT now()`, **PK** (`follower_id`, `followee_id`), **CHECK** (`follower_id <> followee_id`) | USR-04 |
+| 26 | `notifications` | 앱 내 알림함 (모임 확정/변경/취소/다음 모임/운영 처리) | `user_id` | `id uuid PK`, `user_id uuid NOT NULL FK`, `kind text NOT NULL CHECK (kind IN ('club_confirmed','club_changed','club_cancelled','club_ended','club_next','moderation','penalty'))`, `title text NOT NULL`, `body text NOT NULL`, `target_type text NULL`, `target_id text NULL`, `read_at timestamptz NULL`, `created_at timestamptz NOT NULL DEFAULT now()` | USR-06, CLUB-01~02 |
+| 27 | `moderation_reports` | 게시물·방명록·모임·댓글 신고 및 운영자 처리 기록 | `reporter_id` | `id uuid PK`, `reporter_id uuid NOT NULL FK`, `target_type text NOT NULL CHECK (target_type IN ('post','guestbook','club','club_comment'))`, `target_id uuid NOT NULL`, `reason text NOT NULL`, `status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','hidden','dismissed'))`, `admin_note text NULL`, `resolved_at timestamptz NULL`, `created_at timestamptz`, **UNIQUE** (`reporter_id`, `target_type`, `target_id`) | LOCAL-08, VISIT-03 |
+| 28 | `user_penalties` | 모임 불참 누적 및 댓글 제한 패널티·재검토 요청 | `user_id` | `id uuid PK`, `user_id uuid NOT NULL FK`, `kind text NOT NULL CHECK (kind IN ('no_show','comment_abuse'))`, `strike_count smallint NOT NULL DEFAULT 1`, `club_id uuid NULL FK`, `reason text NOT NULL`, `starts_at timestamptz NOT NULL DEFAULT now()`, `ends_at timestamptz NULL`(`NULL`이고 `is_permanent=true`면 4회째 참가 불가), `is_permanent boolean NOT NULL DEFAULT false`, `appeal_text text NULL`, `appeal_status text NULL CHECK (appeal_status IN ('pending','released','rejected'))`, `active boolean NOT NULL DEFAULT true` | CLUB-03 |
+
+---
+
+## 11. 미확인 항목(`Q-번호`) 단독 예비본 확정값
+
+구현 지연을 막기 위해 기존 `미확인(임시)` 항목을 아래와 같이 확정해 구현한다.
+
+| Q 번호 | 항목 | 확정 구현 방식 |
+| :--- | :--- | :--- |
+| **Q-18, Q-41, Q-42** | 외부 API(정보나루·네이버·예스24) 연동 및 한도 | 환경변수에 API 키가 있으면 실호출 + DB 캐시(`availability_observations`, `popular_books_cache`) 및 `provider_daily_usage` 상한을 적용하고, **키가 없거나 네트워크/호출 실패 시 내장 시드 데이터로 Fallback**하여 시연·테스트가 항상 동작하게 한다. |
+| **Q-21** | 같은 책 중복 대출 및 목록 페이지 크기 | 같은 책의 동시 `on_loan`은 1건으로 제한(`UNIQUE (user_id, book_id) WHERE status='on_loan'`). 커서 페이지 기본 `limit = 20`(최대 50). |
+| **Q-23** | 회원 탈퇴(`DELETE /api/v1/me`) 처리 범위 | `users.status = 'withdrawn'` 전환, 개인 전용 데이터(`loan_plans`, `loans`, `reading_logs`, `visit_stamps`, `post_bookmarks`, `feed_bookmarks`, `notifications`, `user_follows`) 즉시 삭제, 작성한 공개 `posts`·`guestbook_entries`는 `withdrawn`/`deleted` 상태로 전환해 즉시 비노출 처리. |
+| **Q-31** | 광장 피드·홈 인기글 기준 | `status = 'published'` 게시물 중 `like_count DESC, published_at DESC` 순. |
+| **Q-45, Q-49** | 방문 스탬프 공개 표시 및 반납 집계 최소 건수 | 방문 스탬프는 방문 페이지에서 `"다녀왔어요"`를 누르고 공개 여부를 선택할 때 기록. 도서관 반납 집계(`library_return_stats`)는 동의한 사용자의 반납 시 +1하며 도서관별 상위 9권을 오늘의 서가 첫 페이지에 노출(데이터가 없으면 인기 도서 탭을 먼저 노출). |
+| **Q-53** | 게시물 사진 업로드 저장소 | 개발·시연 환경은 `server/uploads/` 로컬 정적 서빙(`/api/v1/uploads/files/{filename}`), Pillow로 EXIF 메타데이터를 완전 제거 후 저장(최대 10MB, `jpeg`/`png`/`webp`). |
+| **Q-54, Q-55, Q-56** | 공개 범위·초기 닉네임·북마크 | 공개 피드는 방문자도 열람 가능. `POST /api/v1/auth/session` 시 `user_profiles`가 없으면 `이웃-${sub 앞 4자리}`로 자동 생성. 북마크는 M1 `post_bookmarks`와 M2 `feed_bookmarks`를 모두 지원. |

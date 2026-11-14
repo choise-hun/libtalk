@@ -49,9 +49,7 @@ test-results/
 scratch/
 tmp/
 
-# 팀 규칙(private 레포 axteamc/team에서 setup-team.sh가 만든다) — 올리지 않는다
-/CLAUDE.md
-/.claude/
+# 옛 협업 문서 보관 폴더 제외
 /AGENTS.md
 /GEMINI.md
 /AI간_협업_구조.md

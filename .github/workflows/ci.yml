@@ -78,6 +78,7 @@ jobs:
           enable-cache: true
           cache-dependency-glob: server/uv.lock
       - run: uv sync --locked
+      - run: if [ -f alembic.ini ]; then uv run alembic upgrade head; fi
       - run: uv run pytest -W error
 
   app:
@@ -102,8 +103,8 @@ jobs:
   ios:
     name: iOS 빌드 점검
     needs: changes
-    # 실측 13~23분이라 PR에서는 돌리지 않는다(PR 대기 0). main push·수동 실행에서만 돌고, 깨지면 그 머지 커밋이 원인이다(2026-11-12 사용자 결정).
-    if: github.event_name != 'pull_request'
+    # 단독 예비본에서는 빠른 커밋 검증을 위해 수동 실행(workflow_dispatch)에서만 iOS 빌드를 돌린다.
+    if: github.event_name == 'workflow_dispatch'
     # macos-26 기본 Xcode 26.6(Expo SDK 58 최소 26.4). ios/는 커밋하지 않고 여기서만 만든다. 스크린샷 비교 없음.
     runs-on: macos-26
     timeout-minutes: 60

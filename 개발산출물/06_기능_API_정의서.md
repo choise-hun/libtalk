@@ -1,8 +1,7 @@
-# 06. 기능·API 정의서
+# 06. 기능·API 정의서 (단독 마스터 예비본: M1 + M2 전 범위 통합)
 
-> 상태: **M1 엔드포인트 목록 — 선행 설계 원본(2026-11-13, D 승인 방향 [C-53](스펙_변경_이력.md), 기준선 B0)**. 담당: D.
-> **이 문서가 M1 엔드포인트의 존재(경로·메서드)·인증·목적과 공통 오류 코드의 원본이다.** 기능별 계약서(`../team/contracts/<기능>.md` §3·§4)는 요청·응답 필드, 기능별 오류, 함수 시그니처, 시험을 구체화한다. 계약서가 이 문서와 달라져야 하면 **이 문서를 먼저 고치고**([스펙 변경 이력](스펙_변경_이력.md) 한 행) 계약서를 맞춘다.
-> 입력: [02 요구사항](02_요구사항_정의서.md), [유저 플로우](유저_플로우.md), [05 DB 설계서](05_ERD_및_DB설계서.md), [모호점 해소 기록](모호점_해소_기록.md) "2026-11-13 계약 전 확인 답변", `../team/contracts/auth.md` AUTH-1(초안).
+> 상태: **M1(1~30번) + M2(31~62번) 전체 엔드포인트 및 공통 오류 코드 확정.**
+> **역이식 호환 원칙**: §2.1~§2.5의 M1 30개 엔드포인트와 §3의 공통 오류 코드는 본 협업 레포(`axteamc/localone`)와 경로·메서드·응답 규격을 100% 동일하게 유지하며, M2 기능(독서 기록·방명록·오늘의 서가·방문 스탬프·모임·프로필 3탭·팔로우·알림함·신고/운영)은 §2.6~§2.10에 확장 정의한다.
 
 상태 낱말(`확정` / `기본값(Claude)` / `미확인(임시)` + Q-번호)은 [05 §0](05_ERD_및_DB설계서.md)과 같다. **주니어(A·B·C) 영역 엔드포인트는 경로·메서드·인증·목적까지만 적는다.** 필드·개수·정렬 세부·화면 동작은 세부 명세서와 계약서의 몫이다.
 
@@ -91,9 +90,68 @@
 - 상세가 "펼쳐지고 주변에 피드가 이어지는" 것은 26·28을 다시 부르는 것으로 하고 전용 엔드포인트를 두지 않는다(`기본값(Claude)`).
 - 공유 링크(C-46 D2)의 주소 모양은 딥링크와 얽혀 LOCAL-2 계약서에서 정한다.
 
-### 2.5 도서관 방문 (A)
+### 2.5 도서관 방문 (A — M1)
 
-A는 M1에 자기 서버 엔드포인트가 없다. 지도 홈은 10번, 방문 페이지 헤더는 11번, 피드 자리는 26번을 쓴다. 도서관 기본값·보는 위치는 서버에 보내지 않는다(05 §6).
+A는 M1에 자기 서버 엔드포인트가 없다. 지도 홈은 10번, 방문 페이지 헤더는 11번, 피드 자리는 26번을 쓴다. 도서관 기본값·보는 위치·방문 횟수는 기기에만 둔다(05 §6).
+
+---
+
+### 2.6 도서관 방문 M2 확장 — 방명록·오늘의 서가·스탬프·홈 하단 (`VISIT-3`, `VISIT-4`)
+
+| # | 메서드·경로 | 인증 | 목적 | 요구사항 |
+| :---: | :--- | :--- | :--- | :--- |
+| 31 | `GET /api/v1/libraries/{library_id}/guestbook?cursor=` | 선택 | 해당 도서관 공개 방명록 목록 (피드 혼합용 및 단독 조회) | VISIT-03 |
+| 32 | `POST /api/v1/libraries/{library_id}/guestbook` | 필수 | 도서관 방명록 짧은 글 작성 | VISIT-03 |
+| 33 | `DELETE /api/v1/guestbook/{entry_id}` | 필수(작성자) | 본인 방명록 글 삭제(`status='deleted'`) | VISIT-03 |
+| 34 | `GET /api/v1/libraries/{library_id}/bookshelf` | 없음 | 방문 페이지 하단 "오늘의 서가" 3종(① 요즘 읽은 책 반납 집계 ② 도서관 인기 도서 ③ 운영자 테마 추천 도서, 페이지당 3권 단위) | VISIT-04 |
+| 35 | `GET /api/v1/libraries/{library_id}/visit-stamp/today` | 필수 | 오늘(서울 날짜) 해당 도서관 방문 스탬프 상태 조회 | VISIT-05 |
+| 36 | `POST /api/v1/libraries/{library_id}/visit-stamp` | 필수 | 오늘의 "다녀왔어요" 스탬프 찍기 및 공개 여부(`is_public`) 설정/변경 | VISIT-05 |
+| 37 | `GET /api/v1/home/summary?lat=&lng=` | 선택 | 지도 홈 하단 섹션: 지역 인기글·내 최근 독서 기록(로그인 시)·추천 서적 | VISIT-06 |
+
+### 2.7 비공개 독서 기록 & 내 발자취 (`READ-1`, `READ-2`)
+
+| # | 메서드·경로 | 인증 | 목적 | 요구사항 |
+| :---: | :--- | :--- | :--- | :--- |
+| 38 | `GET /api/v1/me/reading-logs?library_id=&cursor=` | 필수 | 내 비공개 독서 기록 전체 또는 도서관별 필터(내 발자취) 조회 | READ-01, READ-02 |
+| 39 | `POST /api/v1/me/reading-logs` | 필수 | 비공개 독서 기록 작성 (도서관 미선택 시 `library_id = null` 그대로 저장) | READ-01 |
+| 40 | `PATCH /api/v1/me/reading-logs/{log_id}` | 필수 | 내 독서 기록 수정 | READ-01 |
+| 41 | `DELETE /api/v1/me/reading-logs/{log_id}` | 필수 | 내 독서 기록 삭제 | READ-01 |
+| 42 | `GET /api/v1/me/reading-logs/stats` | 필수 | 독서 기록 기초 통계(전체 권수·이번 달 권수·방문 기록 도서관 수, 빈 값은 `0`) | READ-02 |
+
+### 2.8 도서관 기반 작은 모임 (`CLUB-1`, `CLUB-2`, `CLUB-03`)
+
+| # | 메서드·경로 | 인증 | 목적 | 요구사항 |
+| :---: | :--- | :--- | :--- | :--- |
+| 43 | `GET /api/v1/libraries/{library_id}/clubs?cursor=` | 선택 | 해당 도서관의 작은 모임 목록 | CLUB-01 |
+| 44 | `POST /api/v1/libraries/{library_id}/clubs` | 필수 | 새 모임 만들기 (시간·장소 미정 허용, 정원 선택) | CLUB-01 |
+| 45 | `GET /api/v1/clubs/{club_id}` | 선택 | 모임 상세 (일정·장소·정원·참가자 수·내 참가 상태·연결된 다음 회차 모임 목록) | CLUB-01, CLUB-02 |
+| 46 | `PATCH /api/v1/clubs/{club_id}` | 필수(생성자) | 일정·장소 확정/변경(시작 후 시작 시각 변경 금지), 조기 모집 마감(`status='closed'`) — 참가자에게 알림 생성 | CLUB-01 |
+| 47 | `POST /api/v1/clubs/{club_id}/cancel` | 필수(생성자) | 종료 전 모임 취소 (`cancel_reason` 필수, 참가자 알림 생성) | CLUB-01 |
+| 48 | `POST /api/v1/clubs/{club_id}/join` · `DELETE .../join` | 필수 | 즉시 참가 신청(승인 없음, 패널티 기간 중이면 `403 PENALTY_RESTRICTED`) 및 시작 전 참가 취소 | CLUB-01, CLUB-03 |
+| 49 | `POST /api/v1/clubs/{club_id}/attendance` | 필수 | 본인 참석 체크 또는 만든 사람의 참가자 출석/불참(`attended`/`no_show`) 확인 및 누적 불참 패널티(1회 3일, 2회 7일, 3회 30일, 4회 영구) 반영 | CLUB-02, CLUB-03 |
+| 50 | `GET /api/v1/clubs/{club_id}/comments` · `POST .../comments` | 선택 / 필수 | 모임 장소·시간 협의 댓글 조회 및 작성(패널티 제한 시 `403 PENALTY_RESTRICTED`) | CLUB-01, CLUB-03 |
+| 51 | `DELETE /api/v1/club-comments/{comment_id}` | 필수(작성자) | 본인 댓글 삭제 | CLUB-01 |
+| 52 | `POST /api/v1/club-comments/{comment_id}/delete-request` | 필수(모임 생성자) | 만든 사람의 특정 댓글 삭제 및 참가 제한 요청 접수(중복 방지, 관리자 승인 전 댓글 유지) | CLUB-01, CLUB-03 |
+| 53 | `GET /api/v1/clubs/{club_id}/my-review` · `PUT .../my-review` | 필수 | 모임 종료 후 본인 비공개 후기 조회·작성·수정 (선택적으로 공개 SNS 게시물로 별도 발행) | CLUB-02 |
+| 54 | `POST /api/v1/clubs/{club_id}/next-club` | 필수(참가자) | 이전 회차 정보를 복사해 다음 회차 모임 생성 및 이전 참가자(취소·제한자 제외)에게 알림 발송 | CLUB-02 |
+
+### 2.9 프로필 3탭·이웃 팔로우·통합 북마크·알림함 (`AUTH-4` / `USR-03~06`)
+
+| # | 메서드·경로 | 인증 | 목적 | 요구사항 |
+| :---: | :--- | :--- | :--- | :--- |
+| 55 | `GET /api/v1/me/profile` · `PATCH /api/v1/me/profile` | 필수 | 내 프로필(닉네임·한 줄 소개·아바타) 조회 및 편집 | USR-03 |
+| 56 | `GET /api/v1/users/{user_id}/profile` | 선택 | 타 사용자 공개 프로필(닉네임·소개·내 팔로우 여부·공개 게시물 목록, 팔로워 수/목록 비노출) | USR-03, USR-04 |
+| 57 | `PUT /api/v1/users/{user_id}/follow` · `DELETE .../follow` | 필수 | 이웃 팔로우 및 언팔로우 (멱등) | USR-04 |
+| 58 | `GET /api/v1/me/collections/{tab}?library_id=&cursor=` | 필수 | 내 정보 3탭 조회: `tab` = `posts`(내 게시물) / `likes`(좋아요 모음, 최근순) / `bookmarks`(북마크 모음, 최근순, 철회·숨김 제외) | USR-03, USR-05 |
+| 59 | `PUT /api/v1/bookmarks/{target_type}/{target_id}` · `DELETE ...` | 필수 | 통합 북마크 저장·해제 (`target_type`: `post`, `guestbook`, `club`, `stamp`, 재저장 시 맨 앞) | USR-05, LOCAL-03 |
+| 60 | `GET /api/v1/me/notifications?cursor=` · `POST .../read` | 필수 | 앱 내 알림함 목록(안 읽은 수 포함) 조회 및 개별/전체 읽음 처리 | USR-06 |
+
+### 2.10 신고·운영자 숨김·테마/룩/패널티 관리 (`LOCAL-4`, `VISIT-4`, `CLUB-03`)
+
+| # | 메서드·경로 | 인증 | 목적 | 요구사항 |
+| :---: | :--- | :--- | :--- | :--- |
+| 61 | `POST /api/v1/reports` | 필수 | 게시물·방명록·모임 신고 접수 | LOCAL-08 |
+| 62 | `GET /api/v1/admin/reports` · `POST /api/v1/admin/reports/{id}/resolve` | 필수(운영자) | 신고 목록·댓글 삭제 요청·패널티 재검토 조회 및 운영자 숨김/참가 제한/해제, 도서관 룩(`PATCH /api/v1/admin/libraries/{id}/look`)·서가 테마(`POST/PATCH /api/v1/admin/shelf-themes`) 관리 | LOCAL-08, VISIT-04·07, CLUB-03 |
 
 ## 3. 공통 오류 코드
 
