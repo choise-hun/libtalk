@@ -2,7 +2,7 @@ import { deviceStorage } from "../../lib/platform";
 import { RECENT_BOOK_LIMIT } from "../../lib/policy";
 import { Book, isBook } from "./api";
 
-const keyFor = (userId: string | null) => `libtalk:recent-books:v1:${userId ?? "guest"}`;
+const keyFor = (userId: string | null) => `recent_books:${userId ?? "guest"}`;
 // 키별 직렬화: 느린 저장/읽기와 연타 삭제가 앞선 변경을 덮지 않는다.
 const queues = new Map<string, Promise<unknown>>();
 function serial<T>(key: string, work: () => Promise<T>): Promise<T> {

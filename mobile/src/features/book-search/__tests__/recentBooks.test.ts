@@ -25,12 +25,16 @@ describe("LIB-1 최근 본 도서 / AC-UI·AC-AUTH", () => {
     expect(await loadRecent("A")).toEqual([]);
   });
   test("계정 A·B·비로그인 키 분리 및 기기 재열람", async () => {
+    // 02 §9의 키로 이미 저장된 기록을 읽어야 한다(DEF-022).
+    values.set("recent_books:A", JSON.stringify([book(0)]));
+    expect((await loadRecent("A"))[0]?.title).toBe("책 0");
     await updateRecent("A", { add: book(1) });
     await updateRecent("B", { add: book(2) });
     await updateRecent(null, { add: book(3) });
     expect((await loadRecent("A"))[0]?.title).toBe("책 1");
     expect((await loadRecent("B"))[0]?.title).toBe("책 2");
     expect((await loadRecent(null))[0]?.title).toBe("책 3");
+    expect(storage.setItem).toHaveBeenCalledWith("recent_books:guest", JSON.stringify([book(3)]));
   });
   test("느린 저장 중 연속 추가·전체 삭제도 순서 보장", async () => {
     let release!: () => void;
