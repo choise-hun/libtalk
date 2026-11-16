@@ -129,6 +129,9 @@ Step·순서의 원본은 [상용 서비스 계획 §3](상용_서비스_계획.
   - 첫 착수 Step: 6번 LIB-0 — feat(lib): LIB-0 도서·도서관·소장·인기도서 공통 조회 엔진(캐시·상한·시드 Fallback)
     (06 #7~#15. 대상: server/app/services/provider_engine.py, server/app/routers/books.py, server/app/routers/libraries.py,
      server/app/policy.py, server/tests/test_lib_engine.py 외 — 계획 §3 Phase 2 표와 §3.1 공통 완료 조건)
+  - 추천 모델 / 권장 Effort: 고성능 모델(Claude Fable 또는 Codex Astra) / 높음
+    (이유: 외부 API 3갈래 Fallback, DB 트랜잭션 밖 I/O 분리 H-ARCH-03, Owner: D/C 커밋 분리 H-GIT-05)
+  - Phase 2 완료 후 적대적 리뷰: 구현과 다른 고성능 모델(Astra/Fable) / 높음
   - 착수 전 읽기: 02 §0 LIB-01~07·§9, 05 §3.1(libraries·books·availability_observations·popular_books_cache·provider_daily_usage)·§11, 06 §2.2·§3
   - Phase 1 리뷰(2026-11-15) 결과: DEF-008 구현 완료, DEF-010은 문서 가드(H-GIT-04)로 종결.
     LIB-1 착수 전 처리: DEF-019(공용 디자인 토큰 모듈 + login.tsx 이전).
