@@ -14,6 +14,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.auth import JwksClient, build_jwks_client, router as auth_router
 from app.common import ApiError, error_response, now_kst
+from app.routers.books import router as books_router
+from app.routers.libraries import router as libraries_router
 from app.routers.me import router as me_router
 from app.services.provider_engine import ProviderEngine, Providers, build_providers
 from app.settings import CORS_ENVS, LOCAL_ORIGIN_REGEX, Settings, get_settings
@@ -68,6 +70,11 @@ def create_app(
         providers = Providers() if settings.app_env == "test" else build_providers(settings)
     app.state.provider_engine = ProviderEngine(engine, providers)
     # ── [/lib-0-D] ──
+
+    # ── [lib-C] 도서·도서관 조회 라우터(06 #7~#15) ──
+    app.include_router(books_router)
+    app.include_router(libraries_router)
+    # ── [/lib-C] ──
 
     if settings.app_env in CORS_ENVS:
         # 웹 스모크(브라우저)가 로컬 서버를 부를 수 있게 한다. 인증은 헤더(JWT)라 쿠키 자격 증명은 허용하지 않는다
