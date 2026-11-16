@@ -10,10 +10,10 @@
 
 ## 1. 현재 진행 위치 요약
 
-- **현재 Phase**: **Phase 1 — DB 스키마·시드 기반 및 인증(`AUTH-1~3`) 1~5번 전 구간 구현 및 실행 검증 완료**
-- **직전 완료 Step**: Phase 1 — **5번 `AUTH-2-3`** (`d467c9d`, 내 설정 조회/변경, 로그아웃 정화 및 회원 탈퇴 `DELETE /api/v1/me`)
-- **현재 관문**: **Phase 1 코드 적대적 리뷰 통과(2026-11-15, §5)** — 수정 커밋 `d145fe5`~`f70e77f`, 남은 기한부 결함 `DEF-019`(LIB-1 전)
-- **다음 착수 Phase / Step (리뷰 통과 후)**: **Phase 2 — 6번 `LIB-0` 공통 조회 엔진**부터(`LIB-0` → `LIB-1` → `LIB-2` → `LIB-3`, [계획 §3](상용_서비스_계획.md))
+- **현재 Phase**: **Phase 2 — 6번 `LIB-0` 구현·실행 검증 완료**(2026-11-16, §3 재개 기록)
+- **직전 완료 Step**: `LIB-0` (`1d759ac` Owner: D / `59e4464` Owner: C), 선행 결함 `DEF-019`도 `a676ed6`으로 해결
+- **현재 관문**: **Phase 1 코드 적대적 리뷰 통과(2026-11-15, §5)**. 이번 재개 검증은 자체 점검이며 Phase 2 타 모델 적대적 리뷰는 Phase 종료 후 수행
+- **다음 착수 Phase / Step**: **Phase 2 — 7번 `LIB-1`** 도서 검색·진입 추천·상세 화면부터(`LIB-1` → `LIB-2` → `LIB-3`, [계획 §3](상용_서비스_계획.md))
 - **문서 정합 리뷰(2026-11-15)**: 계획·02·05·06·규칙 문서를 적대적 리뷰해 고쳤다(§5 표, `DEF-007`~`DEF-012`, 커밋 `d97bc8f`)
 - **Phase 1 코드 리뷰(2026-11-15)**: `DEF-008`·`DEF-013`~`DEF-018` 수정, `DEF-019`·`DEF-020` 등록(§5, 하네스 §6)
 
@@ -32,13 +32,15 @@
 | 4 | `DB-M1-CORE` | `feat(db): M1 핵심 테이블(0002) 및 M2 확장 테이블(0003) 마이그레이션·초기 시드` | **완료** | `59b2af1` | 28개 전 테이블 RLS(`relrowsecurity=true`, 정책 0개)·왕복 마이그레이션·시드 검증 (`pytest -W error` 66건 통과) |
 | 5 | `AUTH-2-3` | `feat(auth): AUTH-2·3 내 설정(반경·동의) 조회/변경, 로그아웃 정화 및 회원 탈퇴(DELETE /api/v1/me)` | **완료** | `d467c9d` | 백엔드 `pytest -W error` 69건 통과 + 모바일 `tsc`·`jest` 10건·`expo export --platform web` 통과 |
 
-### Phase 2 ~ Phase 7 (대기)
+### Phase 2 ~ Phase 7
 
 Step·순서의 원본은 [상용 서비스 계획 §3](상용_서비스_계획.md)이다. 아래는 그 표의 요약이며 여기서 Step을 새로 만들지 않는다(2026-11-15 문서 리뷰에서 이 절이 계획과 다른 Step ID·순서를 적고 있던 것을 바로잡음, `DEF-007`).
 
 | Phase | 순서 | Step | 상태 |
 | :---: | :---: | :--- | :---: |
-| 2 (M1 조회) | 6~9 | `LIB-0` → `LIB-1` → `LIB-2` → `LIB-3` | 대기 |
+| 2 (M1 조회) | 6 | `LIB-0` | 완료: `1d759ac`(D)·`59e4464`(C), 서버 전체 176건 통과 |
+| 2 (M1 조회) | 선행 | `DEF-019` | 해결: `a676ed6`, 모바일 21건·타입·웹 export 통과 |
+| 2 (M1 조회) | 7~9 | `LIB-1` → `LIB-2` → `LIB-3` | 대기 |
 | 3 (M1 방문·광장) | 10~13 | `VISIT-1` → `VISIT-2` → `LOCAL-1` → `LOCAL-2` | 대기 |
 | 4 (M1 반납 비서, **M1 완결 관문**) | 14~15 | `LOAN-1-2` → `LOAN-3` | 대기 |
 | 5 (M2 방문 확장·기록) | 16~19 | `READ-1-2` → `VISIT-3` → `VISIT-4` → `LOCAL-3` | 대기 |
@@ -100,6 +102,19 @@ Step·순서의 원본은 [상용 서비스 계획 §3](상용_서비스_계획.
 
 ---
 
+### [2026-11-16 재개] AUTH-1-P7 대조·LIB-0 검증·DEF-019 완료
+
+- **중단 상태**: `solo-main`, HEAD `7934e88`(libtalk/main 대비 3커밋 선행), 미추적 `mobile/src/theme/tokens.ts`·`index.ts` 초안. 기존 서버·계획 커밋과 토큰 초안을 보존해 이어받음.
+- **작업 1 — 기존 반영 확인**: `../libproject`의 `9fb4a0c`와 libtalk `d6bb42f`, 현재 작업 트리의 지정 5파일(`mobile/.env.example`, `app.config.js`, `app.json`, `src/auth/platform.ts`, `src/auth/__tests__/platform.test.ts`) Git blob SHA가 모두 일치. `d6bb42f`의 `Owner: D` 확인. 이미 반영되어 중복 커밋 없음.
+- **작업 2 — LIB-0**: 기존 `1d759ac`(조회 엔진·policy·설정·공통 시험, `Owner: D`)와 `59e4464`(#7~#15 라우터·시험·06, `Owner: C`) 유지. 마이그레이션 변경 없음. `02 §9` 정책 수치와 `06 §7` 요청·응답 표는 해당 커밋에 포함.
+- **작업 3 — DEF-019**: 계획 경로 선등록 `7934e88` 뒤 `a676ed6`(`Owner: D`). 포함 5파일: `mobile/src/theme/tokens.ts`, `index.ts`, `__tests__/theme.test.ts`, `mobile/app/login.tsx`, `index.tsx`. 4룩 색·곡률, 배경에서 파생한 보조 글자/구분선, 채움 대비 글자 선택. 문서의 현재 **임시값** 유지(캘리브레이션 모니터에서 최종 조정 예정). 로그인은 기존 색·곡률을 보존, 스모크 화면은 warm 토큰 적용.
+- **이번 세션에서 실행한 검증**:
+  - `docker compose up -d --wait db` → Healthy(로컬 PostgreSQL 17, localhost:5433/localone_test).
+  - `server/`, `APP_ENV=test`, 위 로컬 `DATABASE_URL` 명시 후 `.venv/Scripts/python.exe -m alembic upgrade head` → rc=0, `.venv/Scripts/python.exe -m pytest -W error` → **176 passed in 16.89s**. `uv`가 PATH·기존 venv에 없어 이미 설치된 venv Python으로 동일 도구 실행.
+  - `mobile/`: `npx tsc --noEmit` → rc=0, `npx jest --runInBand` → **5 suites / 21 passed**, `npx expo export --platform web` → rc=0. export 중 `NO_COLOR`/`FORCE_COLOR` 환경변수 경고만 출력.
+  - 두 디자인 문서의 4룩×9색을 코드와 각각 대조 → 36개씩 일치. 두 화면 색상 리터럴 없음, `git diff --check` 통과.
+- **검증 한계**: 이번은 중단 작업 재개 및 자체 점검. 실 외부 제공자 API·실 Supabase 로그인·실기기·색상 육안 검수·Phase 2 타 모델 적대적 리뷰·원격 CI는 실행하지 않음. 서버 테스트는 로컬 DB와 제공자 대역/로컬 HTTP 서버를 사용.
+
 ## 4. Phase 1 적대적 리뷰어(타 LLM) 및 Phase 2 착수 인계 블록
 
 ```text
@@ -126,15 +141,15 @@ Step·순서의 원본은 [상용 서비스 계획 §3](상용_서비스_계획.
 [Phase 2 착수 인계 (리뷰 통과 후 다음 세션 목표)]
 다음 작업 Phase / Step:
   - Phase 2 (6번 LIB-0 -> 7번 LIB-1 -> 8번 LIB-2 -> 9번 LIB-3)
-  - 첫 착수 Step: 6번 LIB-0 — feat(lib): LIB-0 도서·도서관·소장·인기도서 공통 조회 엔진(캐시·상한·시드 Fallback)
+  - 완료 Step: 6번 LIB-0 — feat(lib): LIB-0 도서·도서관·소장·인기도서 공통 조회 엔진(캐시·상한·시드 Fallback)
     (06 #7~#15. 대상: server/app/services/provider_engine.py, server/app/routers/books.py, server/app/routers/libraries.py,
      server/app/policy.py, server/tests/test_lib_engine.py 외 — 계획 §3 Phase 2 표와 §3.1 공통 완료 조건)
-  - 추천 모델 / 권장 Effort: 고성능 모델(Claude Fable 또는 Codex Astra) / 높음
-    (이유: 외부 API 3갈래 Fallback, DB 트랜잭션 밖 I/O 분리 H-ARCH-03, Owner: D/C 커밋 분리 H-GIT-05)
+  - 다음 착수 Step: 7번 LIB-1 — 도서 검색·진입 추천·최근 본 도서 20권·상세 화면
+  - 추천 모델 / 권장 Effort: 중급/기본 모델 / 중간(계획 §3 LIB-1)
   - Phase 2 완료 후 적대적 리뷰: 구현과 다른 고성능 모델(Astra/Fable) / 높음
   - 착수 전 읽기: 02 §0 LIB-01~07·§9, 05 §3.1(libraries·books·availability_observations·popular_books_cache·provider_daily_usage)·§11, 06 §2.2·§3
   - Phase 1 리뷰(2026-11-15) 결과: DEF-008 구현 완료, DEF-010은 문서 가드(H-GIT-04)로 종결.
-    LIB-1 착수 전 처리: DEF-019(공용 디자인 토큰 모듈 + login.tsx 이전).
+    LIB-1 선행 DEF-019 해결(a676ed6). mobile/src/theme의 토큰을 재사용한다.
     LIB-0부터 새 쓰기 엔드포인트는 트랜잭션 첫 SQL로 lock_active_user(H-ARCH-11).
 ```
 
