@@ -2,6 +2,7 @@ import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { useAuth } from "../src/auth/AuthProvider";
+import { onFill, theme } from "../src/theme";
 
 // 개발 스모크 화면: GET /api/v1/ready 결과와 로그인 상태 줄을 보여 준다.
 // 주소는 EXPO_PUBLIC_API_URL로 바꾼다(Android 에뮬레이터는 http://10.0.2.2:8000).
@@ -52,7 +53,7 @@ export default function Index() {
 
   return (
     <View style={styles.container}>
-      {state.kind === "loading" && <ActivityIndicator accessibilityLabel="확인 중" />}
+      {state.kind === "loading" && <ActivityIndicator accessibilityLabel="확인 중" color={theme.colors.inkStrong} />}
       {state.kind === "ready" && (
         <>
           <Text style={styles.title}>서버 상태: 준비됨</Text>
@@ -82,11 +83,11 @@ export default function Index() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 12 },
-  title: { fontSize: 18, fontWeight: "600", textAlign: "center" },
-  sub: { fontSize: 14, color: "#666" },
+  container: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 12, backgroundColor: theme.colors.bg },
+  title: { fontSize: 18, fontWeight: "600", textAlign: "center", color: theme.colors.text },
+  sub: { fontSize: 14, color: theme.colors.textSub },
   authSection: { marginTop: 16, alignItems: "center", gap: 8 },
-  authStatus: { fontSize: 16, fontWeight: "600" },
-  button: { paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8, backgroundColor: "#222" },
-  buttonText: { color: "#fff", fontSize: 16 },
+  authStatus: { fontSize: 16, fontWeight: "600", color: theme.colors.text },
+  button: { paddingVertical: 12, paddingHorizontal: 20, borderRadius: theme.radii.control, backgroundColor: theme.colors.inkStrong },
+  buttonText: { color: onFill(theme.colors.inkStrong), fontSize: 16 },
 });

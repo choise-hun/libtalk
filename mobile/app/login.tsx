@@ -10,21 +10,10 @@ import {
 } from "react-native";
 import { useAuth } from "../src/auth/AuthProvider";
 import { isAppleSignInAvailable, SignInResult } from "../src/auth/platform";
+import { theme } from "../src/theme";
 
 // 개발산출물/시안/AUTH-1_로그인_시안.html 채택 후보 B (위 소개·책 모양 로고 방향, 아래 제공자 버튼)
-const TOKENS = {
-  cream: "#EFEFE7",
-  paper: "#EFF1F1",
-  surface3: "#BFBCB5",
-  fill1: "#E9C970",
-  fill2: "#EDC9A9",
-  fill3: "#B3BFB5",
-  inkStrong: "#2E333F",
-  text: "#1D1D1F",
-  sub: "#71716F",
-  rCard: 18,
-  rPill: 9999,
-};
+const { colors, radii } = theme;
 
 function messageForFailure(result: Extract<SignInResult, { ok: false }>): string {
   if (result.reason === "cancelled") {
@@ -122,7 +111,7 @@ export default function LoginScreen(): React.JSX.Element {
         {busy && (
           <ActivityIndicator
             accessibilityLabel="로그인하는 중"
-            color={TOKENS.inkStrong}
+            color={colors.inkStrong}
             style={styles.spinner}
           />
         )}
@@ -149,7 +138,7 @@ export default function LoginScreen(): React.JSX.Element {
               buttonStyle={
                 AppleAuthentication.AppleAuthenticationButtonStyle.BLACK
               }
-              cornerRadius={TOKENS.rPill}
+              cornerRadius={radii.control}
               style={styles.appleButton}
               onPress={() => void handleSignIn("apple")}
             />
@@ -169,7 +158,7 @@ export default function LoginScreen(): React.JSX.Element {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: TOKENS.cream,
+    backgroundColor: colors.cream,
     paddingHorizontal: 24,
     paddingTop: 48,
     paddingBottom: 36,
@@ -182,13 +171,13 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
     letterSpacing: 1,
-    color: TOKENS.text,
+    color: colors.text,
   },
   title: {
     fontSize: 24,
     fontWeight: "700",
     lineHeight: 34,
-    color: TOKENS.text,
+    color: colors.text,
     marginTop: 12,
     marginBottom: 24,
   },
@@ -201,19 +190,19 @@ const styles = StyleSheet.create({
   },
   bookBlock: {
     width: 44,
-    borderRadius: TOKENS.rCard,
+    borderRadius: radii.card,
   },
   bookLeft: {
     height: 72,
-    backgroundColor: TOKENS.fill2,
+    backgroundColor: colors.fill2,
   },
   bookMiddle: {
     height: 90,
-    backgroundColor: TOKENS.fill3,
+    backgroundColor: colors.fill3,
   },
   bookRight: {
     height: 72,
-    backgroundColor: TOKENS.fill1,
+    backgroundColor: colors.fill1,
   },
   bottomActions: {
     gap: 12,
@@ -223,18 +212,18 @@ const styles = StyleSheet.create({
   },
   oauthButton: {
     minHeight: 48,
-    borderRadius: TOKENS.rPill,
+    borderRadius: radii.control,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 20,
   },
   googleButton: {
-    backgroundColor: TOKENS.paper,
+    backgroundColor: colors.paper,
     borderWidth: 1,
-    borderColor: TOKENS.surface3,
+    borderColor: colors.surface3,
   },
   googleButtonText: {
-    color: TOKENS.text,
+    color: colors.text,
     fontSize: 15,
     fontWeight: "700",
   },
@@ -251,7 +240,7 @@ const styles = StyleSheet.create({
   errorCopy: {
     marginTop: 4,
     fontSize: 14,
-    color: TOKENS.text,
+    color: colors.text,
     textAlign: "center",
   },
 });
