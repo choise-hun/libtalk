@@ -162,6 +162,21 @@ def test_recommendations_fall_back_to_popular(make_client: Any, seeded: Engine) 
     assert _error(client.get("/api/v1/books/recommendations", params={"library_id": "x"}))[:2] == (422, "VALIDATION_ERROR")
 
 
+def test_popular_exploration_bypasses_active_theme(make_client: Any, seeded: Engine) -> None:
+    """LIB-1, AC-UI: 테마가 있어도 별도 인기 탐색, 재전송, 도서관 범위·전국 대체."""
+    client = make_client()
+    assert client.get("/api/v1/books/recommendations").json()["kind"] == "theme"
+    for _ in range(2):
+        body = client.get("/api/v1/books/recommendations", params={"kind": "popular"}).json()
+        assert (body["kind"], body["scope"], body["theme"]) == ("popular", "national", None)
+        assert body["books"] and body["basis_label"] == "전국 · 최근 30일"
+    local = client.get("/api/v1/books/recommendations", params={"kind": "popular", "library_id": _lib_id(seeded, "111001")}).json()
+    assert (local["kind"], local["scope"]) == ("popular", "library")
+    fallback = client.get("/api/v1/books/recommendations", params={"kind": "popular", "library_id": _lib_id(seeded, "111002")}).json()
+    assert (fallback["scope"], fallback["fallback_reason"]) == ("national", "not_configured")
+    assert _error(client.get("/api/v1/books/recommendations", params={"kind": "invalid"}))[:2] == (422, "VALIDATION_ERROR")
+
+
 def test_recommendations_nothing_at_all_is_503(make_client: Any, seeded: Engine) -> None:
     with seeded.begin() as conn:
         conn.execute(text("UPDATE shelf_themes SET is_active = false"))

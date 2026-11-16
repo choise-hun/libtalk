@@ -69,6 +69,9 @@ export default function Index() {
         </>
       )}
       <View style={styles.authSection}>
+        <Pressable accessibilityRole="button" onPress={() => router.push("/books")} style={styles.button}>
+          <Text style={styles.buttonText}>도서 검색</Text>
+        </Pressable>
         <Text style={styles.authStatus}>{authLabel}</Text>
         <Pressable
           accessibilityRole="button"

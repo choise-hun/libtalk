@@ -127,14 +127,15 @@ def _active_theme(conn: Connection, library_id: int | None, today: date) -> dict
 
 @router.get("/recommendations")
 async def recommendations(
-    request: Request, library_id: int | None = Query(None, ge=1, le=BIGINT_MAX)
+    request: Request, library_id: int | None = Query(None, ge=1, le=BIGINT_MAX),
+    kind: Literal["auto", "popular"] = Query("auto"),
 ) -> Any:
     library = await _library_or_404(request, library_id) if library_id is not None else None
     today = today_kst()
     scopes: list[tuple[Literal["library", "national"], int | None]] = (
         [("library", library.id), ("national", None)] if library else [("national", None)]
     )
-    for scope, theme_library_id in scopes:
+    for scope, theme_library_id in (scopes if kind == "auto" else []):
         found = await run_db(request.app.state.engine, lambda c: _active_theme(c, theme_library_id, today))
         if found is not None:
             return {
