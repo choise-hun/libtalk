@@ -160,3 +160,20 @@ Step·순서의 원본은 [상용 서비스 계획 §3](상용_서비스_계획.
   6. 문서 정합: 실제 컬럼 208개 중 05 본문에 이름이 없는 것 5개(`loan_plans.memo`, `loans.due_on_assumed`, `posts.image_kind`·`image_value`·`overlay_text` — 주니어 영역은 한글 골격 서술, 원본은 마이그레이션이라 S3 기록만). 작업 기록 §3의 저장소 오기 → `DEF-020`
   7. 불변 조건·AC: 10개 조건 대조 — 색 토큰 하드코딩(`login.tsx`) → `DEF-019`. 나머지 Phase 1 해당 조건 충족. **미검증(통과로 세지 않음)**: AC-AUTH·AC-DELETE의 "기기 예약 알림" 부분(알림 기능 없음, `LOAN-1-2`), 업로드 파일 삭제(`LOCAL-1`), C4 실기기·실 Supabase 로그인(웹·Android·iOS), 운영 Supabase에서 서버 DB 계정의 `auth.sessions` SELECT 권한(`RELEASE-1`)
 
+
+---
+
+## 6. 본 레포(`axteamc/localone`) 역이식 기록
+
+판정 기준은 [하네스 `H-GIT-05`·`H-GIT-06`, §7 #7](하네스_엔지니어링_규칙.md). 새로 옮길 때마다 한 줄 더한다.
+
+| 날짜·PC | 본 레포 PR(브랜치) | 옮긴 libtalk 커밋 | 손댄 것 | 상태 |
+| :--- | :--- | :--- | :--- | :--- |
+| 2026-11-16 win | #56 `feat/auth-1-part2` | `9d766ee` | 없음 | PR 올림(머지 전) |
+| 2026-11-16 win | #57 `feat/auth-1-part3` | `661a054` | `ci.yml` 충돌 → 조건 없는 `alembic upgrade head` | PR 올림(머지 전) |
+| 2026-11-16 win | #58 `feat/auth-1-part4` | `9f92bd6` 중 P4 파일 7개 | 계약 P2 파트별 파일로 분할 | PR 올림(머지 전) |
+| 2026-11-16 win | #59 `feat/auth-1-part5` | `9f92bd6` 중 P5 파일 5개 + `eeffa04` + `f70e77f` | DEF-018 시험 파일에서 AUTH-2·3 탈퇴 시험 제외 | PR 올림(머지 전) |
+| 2026-11-16 win | #60 `feat/auth-1-part6` | `9f92bd6` 중 P6 파일 4개 | 없음 | PR 올림(머지 전) |
+
+- 본 레포에서 다섯 브랜치 모두 시험 통과(서버 54→62 passed, 앱 jest 11 passed, tsc·웹 export 통과). 실로그인(C7 외부 설정)·실기기는 미확인.
+- 남은 D 몫(발췌 이식 후보): `83b5540`의 세션 확인(`session_is_alive`·`auth_session_check`), `d145fe5`의 `lock_active_user`. AUTH-2·3 본체는 주니어 테이블이 본 레포에 머지된 뒤.
