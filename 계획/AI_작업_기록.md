@@ -10,10 +10,10 @@
 
 ## 1. 현재 진행 위치 요약
 
-- **현재 Phase**: **Phase 2 — 6번 `LIB-0` 구현·실행 검증 완료**(2026-11-16, §3 재개 기록)
-- **직전 완료 Step**: `LIB-0` (`1d759ac` Owner: D / `59e4464` Owner: C), 선행 결함 `DEF-019`도 `a676ed6`으로 해결
+- **현재 Phase**: **Phase 2 — 7번 `LIB-1` 구현·실행 검증 완료**(2026-11-16, §3 LIB-1 기록)
+- **직전 완료 Step**: `LIB-1` (`e66ef8d` + `4f136d0` DEF-022, Owner: C). 선행 `LIB-0`·`DEF-019` 완료 상태 유지
 - **현재 관문**: **Phase 1 코드 적대적 리뷰 통과(2026-11-15, §5)**. 이번 재개 검증은 자체 점검이며 Phase 2 타 모델 적대적 리뷰는 Phase 종료 후 수행
-- **다음 착수 Phase / Step**: **Phase 2 — 7번 `LIB-1`** 도서 검색·진입 추천·상세 화면부터(`LIB-1` → `LIB-2` → `LIB-3`, [계획 §3](상용_서비스_계획.md))
+- **다음 착수 Phase / Step**: **Phase 2 — 8번 `LIB-2`** 주변·도시 전체 소장/대출 가능 조회부터(`LIB-2` → `LIB-3`, [계획 §3](상용_서비스_계획.md))
 - **문서 정합 리뷰(2026-11-15)**: 계획·02·05·06·규칙 문서를 적대적 리뷰해 고쳤다(§5 표, `DEF-007`~`DEF-012`, 커밋 `d97bc8f`)
 - **Phase 1 코드 리뷰(2026-11-15)**: `DEF-008`·`DEF-013`~`DEF-018` 수정, `DEF-019`·`DEF-020` 등록(§5, 하네스 §6)
 
@@ -40,7 +40,8 @@ Step·순서의 원본은 [상용 서비스 계획 §3](상용_서비스_계획.
 | :---: | :---: | :--- | :---: |
 | 2 (M1 조회) | 6 | `LIB-0` | 완료: `1d759ac`(D)·`59e4464`(C), 서버 전체 176건 통과 |
 | 2 (M1 조회) | 선행 | `DEF-019` | 해결: `a676ed6`, 모바일 21건·타입·웹 export 통과 |
-| 2 (M1 조회) | 7~9 | `LIB-1` → `LIB-2` → `LIB-3` | 대기 |
+| 2 (M1 조회) | 7 | `LIB-1` | 완료: `e66ef8d` + `4f136d0`(C), 서버 177건·모바일 37건·타입·웹 export 통과 |
+| 2 (M1 조회) | 8~9 | `LIB-2` → `LIB-3` | 대기 |
 | 3 (M1 방문·광장) | 10~13 | `VISIT-1` → `VISIT-2` → `LOCAL-1` → `LOCAL-2` | 대기 |
 | 4 (M1 반납 비서, **M1 완결 관문**) | 14~15 | `LOAN-1-2` → `LOAN-3` | 대기 |
 | 5 (M2 방문 확장·기록) | 16~19 | `READ-1-2` → `VISIT-3` → `VISIT-4` → `LOCAL-3` | 대기 |
@@ -115,6 +116,20 @@ Step·순서의 원본은 [상용 서비스 계획 §3](상용_서비스_계획.
   - 두 디자인 문서의 4룩×9색을 코드와 각각 대조 → 36개씩 일치. 두 화면 색상 리터럴 없음, `git diff --check` 통과.
 - **검증 한계**: 이번은 중단 작업 재개 및 자체 점검. 실 외부 제공자 API·실 Supabase 로그인·실기기·색상 육안 검수·Phase 2 타 모델 적대적 리뷰·원격 CI는 실행하지 않음. 서버 테스트는 로컬 DB와 제공자 대역/로컬 HTTP 서버를 사용.
 
+### [2026-11-16] LIB-1 — 도서 검색·진입 추천·최근 20권·상세
+
+- **시작 상태**: `solo-main`, `a0a67dd7e7b3a5cea43c73ab89564eb857e67f31`, `libtalk/main` 동기화, status·staged/unstaged diff 비어 있음. 지정 4문서를 순서대로 읽고 02 §0·§5·§9, 05 §3.1·§11, 06 §2.2·§3·§7 및 디자인·상세 결정을 대조.
+- **기능 커밋**: `e66ef8dd39c85ff59e680f73e14e8abf46f67525`, `Owner: C`. 포함 17파일: `mobile/app/index.tsx`, `mobile/app/books/index.tsx`·`[isbn13].tsx`, `mobile/src/features/book-search/`의 `api.ts`·`recentBooks.ts`·`BookCard.tsx`·`SearchScreen.tsx`·`BookDetail.tsx`·`__tests__/api.test.ts`·`recentBooks.test.ts`·`screens.test.tsx`, `mobile/src/lib/platform.ts`·`policy.ts`, `server/app/routers/books.py`, `server/tests/test_books.py`, `개발산출물/02_요구사항_정의서.md`·`06_기능_API_정의서.md`.
+- **동작**: 홈의 도서 검색 진입 → 자동 포커스 검색창·키보드 회피 스크롤 → 테마 추천/별도 인기 도서/검색·추가 페이지 → 상세. `library_id` 컨텍스트 전달, 서버가 정한 범위·기준·전국 대체·조회 시각·오래된 캐시 표시. 표지가 없거나 로딩 실패하면 제목·저자 표지. 4룩 공용 모듈의 warm 토큰 재사용, 화면 내 색 리터럴·플랫폼 분기 없음.
+- **자체 점검 수정**: `4f136d0`(`Owner: C`, `DEF-022`): 초안 저장 키를 02 §9의 정확한 `recent_books:<user_id>` / `recent_books:guest`로 수정. 계약 키의 기존 데이터 로딩·guest 쓰기 회귀 시험 추가 후 tsc·Jest 37건·웹 export 재통과.
+- **최근 도서**: 검색 결과에서 상세 조회에 성공한 책만 기록. 기기 저장(`web localStorage` / native AsyncStorage), 계정/guest별 분리 키, 20권·중복 맨 앞·개별/전체 삭제. 키별 비동기 쓰기 직렬화, 손상·저장 실패 안내. 로그아웃 정화 콜백으로 화면/진행 요청 무효화; 계정 변경 중 옛 상세가 새 계정의 최근 기록을 만들지 않음. 기기 기록은 계정별 키에 남아 재로그인 시 복원(02 §9), 계정 간 병합 없음.
+- **API 변경**: 06 #9에 `kind=auto|popular` 선택 쿼리 추가. 기본 테마 우선은 유지, 인기 탐색만 테마를 건너뜀. #7·#8·DB/마이그레이션·조회 엔진 변경 없음. 예정/소장 UI는 다음 Step 경계로 유지.
+- **실행 검증**:
+  - `docker compose up -d --wait db`는 **실패**: 다른 저장소 `libproject-db-1`이 5433 사용. 해당 컨테이너·DB를 건드리지 않고 전용 `libtalk-lib1-test-db`(postgres:17, 127.0.0.1:55433) 생성, health=healthy 확인. localhost 연결이 지연되어 중단하고 IPv4 주소·connect_timeout=5 명시. 검증 종료 후 전용 컨테이너 삭제(다른 컨테이너는 유지).
+  - `server/`, `APP_ENV=test`, `DATABASE_URL=postgresql+psycopg://localone:localone@127.0.0.1:55433/localone_test?connect_timeout=5`, `.venv/Scripts/python.exe -u -m alembic upgrade head` rc=0, `.venv/Scripts/python.exe -u -m pytest -W error` → **177 passed in 23.89s**. 기존 venv 도구 사용. 전체 스키마 왕복 시험 포함.
+  - `mobile/`, `npx tsc --noEmit` rc=0, `npx jest --runInBand` → **8 suites / 37 passed**. 최근 20권·계정 분리·동시 쓰기·삭제 실패·페이지 재시도·늦은 오류/성공·계정/도서관 전환·상세 저장 조건·손상 응답·timeout/abort 포함. 최종 `npx expo export --platform web` rc=0(`NO_COLOR`/`FORCE_COLOR` 환경 경고만). `git diff --cached --check` 통과.
+- **검증 한계**: 자체 점검이며 Phase 2 타 모델 적대적 리뷰가 아님. 실제 외부 제공자 API·실 Supabase 로그인·브라우저 육안/반응형·iOS/Android 실기기 키보드/포커스·접근성·원격 CI 미검증. 인기 기간/도서관별 실 제공 조건은 기존 LIB-0 한계 그대로. 본 레포 역이식·PR·머지·배포는 수행하지 않음.
+
 ## 4. Phase 1 적대적 리뷰어(타 LLM) 및 Phase 2 착수 인계 블록
 
 ```text
@@ -144,8 +159,9 @@ Step·순서의 원본은 [상용 서비스 계획 §3](상용_서비스_계획.
   - 완료 Step: 6번 LIB-0 — feat(lib): LIB-0 도서·도서관·소장·인기도서 공통 조회 엔진(캐시·상한·시드 Fallback)
     (06 #7~#15. 대상: server/app/services/provider_engine.py, server/app/routers/books.py, server/app/routers/libraries.py,
      server/app/policy.py, server/tests/test_lib_engine.py 외 — 계획 §3 Phase 2 표와 §3.1 공통 완료 조건)
-  - 다음 착수 Step: 7번 LIB-1 — 도서 검색·진입 추천·최근 본 도서 20권·상세 화면
-  - 추천 모델 / 권장 Effort: 중급/기본 모델 / 중간(계획 §3 LIB-1)
+  - 완료 Step: 7번 LIB-1 — e66ef8d + 4f136d0 DEF-022(Owner: C), 도서 검색·추천·최근 20권·상세
+  - 다음 착수 Step: 8번 LIB-2 — 주변(3km/5km)·도시 전체 소장/대출 가능 조회·외부 실시간 확인 링크
+  - 추천 모델 / 권장 Effort: 고성능(Fable/Astra) / 높음(계획 §3 LIB-2)
   - Phase 2 완료 후 적대적 리뷰: 구현과 다른 고성능 모델(Astra/Fable) / 높음
   - 착수 전 읽기: 02 §0 LIB-01~07·§9, 05 §3.1(libraries·books·availability_observations·popular_books_cache·provider_daily_usage)·§11, 06 §2.2·§3
   - Phase 1 리뷰(2026-11-15) 결과: DEF-008 구현 완료, DEF-010은 문서 가드(H-GIT-04)로 종결.
