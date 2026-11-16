@@ -68,6 +68,23 @@ def _clean_users_between_tests(request: pytest.FixtureRequest) -> Any:
         conn.execute(text("TRUNCATE TABLE users CASCADE"))
 
 
+# M1 조회 엔진 테이블만 적는다(H-GIT-06). books·libraries를 참조하는 표(M2 서가 테마 등)는 CASCADE로 함께 비워진다
+REFERENCE_TABLES = "availability_observations, popular_books_cache, provider_daily_usage, books, libraries"
+
+
+@pytest.fixture
+def clean_reference_tables(db_engine: Engine) -> Any:
+    """조회 엔진 시험용: 공공 참조·캐시·호출 수 테이블을 앞뒤로 비운다(users 정리 픽스처는 이것들을 건드리지 않는다).
+
+    다른 모듈의 시드 개수 시험(도서관 4·도서 6)이 깨지지 않도록 끝나면 빈 상태로 돌려 둔다.
+    """
+    with db_engine.begin() as conn:
+        conn.execute(text(f"TRUNCATE TABLE {REFERENCE_TABLES} RESTART IDENTITY CASCADE"))
+    yield db_engine
+    with db_engine.begin() as conn:
+        conn.execute(text(f"TRUNCATE TABLE {REFERENCE_TABLES} RESTART IDENTITY CASCADE"))
+
+
 @pytest.fixture
 def refusing_db_url() -> Any:
     """연결을 받자마자 닫는 로컬 소켓으로 DB_UNAVAILABLE(503)을 즉시 재현한다."""

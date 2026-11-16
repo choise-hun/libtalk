@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     # DEF-008: 토큰의 session_id가 Supabase auth.sessions에 살아 있는지 본다(로그아웃한 세션 거부).
     # 시험 DB(postgres:17)에는 auth 스키마가 없어 local·test 기본값은 꺼 둔다. production은 필수
     auth_session_check: bool = False
+    # LIB-0 외부 제공자 키(05 §11 Q-18·Q-41). 비어 있으면 그 제공자를 부르지 않고 DB 캐시·시드로 응답한다
+    data4library_api_key: str = ""
+    data4library_api_base_url: str = "http://data4library.kr/api"
+    naver_client_id: str = ""
+    naver_client_secret: str = ""
+    naver_api_base_url: str = "https://openapi.naver.com/v1/search"
 
     @model_validator(mode="after")
     def _check_database_url(self) -> "Settings":

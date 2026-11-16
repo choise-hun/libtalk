@@ -1,0 +1,1150 @@
+"""도서·도서관·소장·인기 도서 공통 조회 엔진(LIB-0): 외부 제공자 호출 + DB 캐시 + 하루 상한 + 시드 Fallback.
+
+지키는 것
+- 외부 HTTP 호출은 `run_db` 트랜잭션 밖에서만 한다(H-ARCH-03, 불변 조건 8).
+  순서는 언제나 ① 캐시 읽기(트랜잭션) → ② 상한 예약(짧은 별도 트랜잭션) → ③ 호출(트랜잭션 밖) → ④ 결과 저장(트랜잭션).
+- 소장·대출은 `yes`/`no`/`unknown` 세 갈래다. 키 없음·오류·시간 초과·상한 초과는 `unknown`이고
+  DB에 저장하지 않는다. 실패를 `no`로 바꾸지 않는다(H-ARCH-06, AC-UNKNOWN).
+- 라우터는 외부 데이터를 이 모듈로만 얻는다(H-ARCH-07). 키가 없거나 제공자가 실패하면
+  DB 캐시(시드 포함, `app.seed`)로 응답한다(05 §11 Q-18·Q-41·Q-42).
+- 좌표는 거리 계산에만 쓰고 저장·로그하지 않는다(NFR-05). 키가 든 주소도 로그에 남기지 않는다.
+
+실제 응답 형식(정보나루 `bookExist`·`loanItemSrch`·`libSrch`, 네이버 `book.json`·`book_adv.json`)은
+키 발급·실측 전이다(계획 §4). 파서는 형식이 다르면 추측하지 않고 `ProviderError`로 본다.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import html
+import http.client
+import json
+import logging
+import math
+import re
+import sys
+import urllib.error
+import urllib.request
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
+from typing import Any, Literal, Protocol, TypeVar
+from urllib.parse import urlencode
+
+from sqlalchemy import text
+from sqlalchemy.engine import Connection, Engine
+
+from app import policy
+from app.common import ApiError, now_kst, today_kst
+from app.db import run_db
+from app.settings import Settings
+
+logger = logging.getLogger("localone.provider")
+T = TypeVar("T")
+
+MSG_NOT_FOUND = "찾을 수 없어요."
+MSG_PROVIDER_LIMIT = "지금은 조회가 많아요. 잠시 뒤 다시 시도해 주세요."
+MSG_PROVIDER_UNAVAILABLE = "정보를 가져오지 못했어요. 다시 시도해 주세요."
+
+FallbackReason = Literal["not_configured", "limit", "provider_error", "no_data"]
+Tri = Literal["yes", "no", "unknown"]
+
+# ─────────────────────────── 값 정규화 ───────────────────────────
+
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def isbn13_is_valid(value: str) -> bool:
+    if not re.fullmatch(r"[0-9]{13}", value):
+        return False
+    total = sum(int(c) * (1 if i % 2 == 0 else 3) for i, c in enumerate(value[:12]))
+    return (10 - total % 10) % 10 == int(value[12])
+
+
+def isbn10_to_13(value: str) -> str | None:
+    """10자리 ISBN(마지막 X 허용)을 978 접두 13자리로 바꾼다(05 §3.1 books.isbn13). 틀리면 None."""
+    value = value.strip().upper()
+    if not re.fullmatch(r"[0-9]{9}[0-9X]", value):
+        return None
+    check10 = sum((10 - i) * (10 if c == "X" else int(c)) for i, c in enumerate(value)) % 11
+    if check10 != 0:
+        return None
+    core = "978" + value[:9]
+    total = sum(int(c) * (1 if i % 2 == 0 else 3) for i, c in enumerate(core))
+    return core + str((10 - total % 10) % 10)
+
+
+def normalize_isbn(raw: str | None) -> str | None:
+    """제공자 ISBN 칸(예: 네이버 "8936434128 9788936434120")에서 유효한 13자리를 고른다."""
+    if not raw:
+        return None
+    tokens = [t.replace("-", "") for t in str(raw).split()]
+    for token in tokens:
+        if isbn13_is_valid(token):
+            return token
+    for token in tokens:
+        converted = isbn10_to_13(token)
+        if converted:
+            return converted
+    return None
+
+
+def _clean_text(raw: Any) -> str | None:
+    if not isinstance(raw, str):
+        return None
+    value = html.unescape(_TAG_RE.sub("", raw)).strip()
+    return value or None
+
+
+def https_cover(url: Any) -> str | None:
+    """표지 주소만 저장하고 이미지는 복사하지 않는다. http는 https로 바꾼다(05 §3.1 books.cover_url)."""
+    if not isinstance(url, str) or not url.strip():
+        return None
+    url = url.strip()
+    if url.startswith("http://"):
+        url = "https://" + url[len("http://") :]
+    return url if url.startswith("https://") else None
+
+
+# ─────────────────────────── 제공자 계약 ───────────────────────────
+
+
+class ProviderError(Exception):
+    """제공자 오류·시간 초과·형식 불일치. 호출자는 unknown/캐시로 바꾼다."""
+
+
+class ProviderLimitReached(Exception):
+    """오늘(서울) 호출 상한에 걸려 호출하지 않았다."""
+
+
+@dataclass(frozen=True)
+class BookInfo:
+    isbn13: str
+    title: str
+    author: str | None = None
+    publisher: str | None = None
+    cover_url: str | None = None
+
+
+@dataclass(frozen=True)
+class SearchPage:
+    items: list[BookInfo]
+    total: int
+
+
+@dataclass(frozen=True)
+class HoldingResult:
+    holding: Literal["yes", "no"]
+    loanable: Tri
+    data_date: date | None = None
+
+
+@dataclass(frozen=True)
+class LibraryInfo:
+    provider_lib_code: str
+    name: str
+    address: str | None = None
+    tel: str | None = None
+    homepage: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    closed_text: str | None = None
+    operating_time_text: str | None = None
+
+
+class BookSearchProvider(Protocol):
+    def search(self, query: str, start: int, display: int) -> SearchPage: ...
+
+    def lookup_isbn(self, isbn13: str) -> BookInfo | None: ...
+
+
+class LibraryDataProvider(Protocol):
+    def book_exist(self, lib_code: str, isbn13: str) -> HoldingResult: ...
+
+    def popular(
+        self, lib_code: str | None, start: date, end: date, size: int
+    ) -> list[BookInfo]: ...
+
+    def libraries(
+        self, dtl_region: str, page: int, size: int
+    ) -> tuple[list[LibraryInfo], int]: ...
+
+
+@dataclass(frozen=True)
+class Providers:
+    """None이면 키가 없는 것(시드·캐시 Fallback)."""
+
+    books: BookSearchProvider | None = None
+    library_data: LibraryDataProvider | None = None
+
+
+# ─────────────────────────── 실제 HTTP 클라이언트 ───────────────────────────
+
+
+def _http_get_json(url: str, headers: dict[str, str], timeout: float) -> Any:
+    request = urllib.request.Request(url, headers={"Accept": "application/json", **headers})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read(policy.PROVIDER_MAX_RESPONSE_BYTES + 1)
+    except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as exc:
+        raise ProviderError(type(exc).__name__) from exc
+    if len(raw) > policy.PROVIDER_MAX_RESPONSE_BYTES:
+        raise ProviderError("응답이 너무 커요")
+    try:
+        return json.loads(raw)
+    except ValueError as exc:
+        raise ProviderError("JSON 형식이 아니에요") from exc
+
+
+def _naver_item(item: Any) -> BookInfo | None:
+    if not isinstance(item, dict):
+        return None
+    isbn13 = normalize_isbn(item.get("isbn"))
+    title = _clean_text(item.get("title"))
+    if not isbn13 or not title:
+        return None  # 상세·소장 조회 대상이 될 수 없는 항목은 뺀다
+    author = _clean_text(item.get("author"))
+    return BookInfo(
+        isbn13=isbn13,
+        title=title,
+        author=author.replace("^", ", ") if author else None,
+        publisher=_clean_text(item.get("publisher")),
+        cover_url=https_cover(item.get("image")),
+    )
+
+
+class NaverBookClient:
+    """네이버 책 검색 API. 키는 헤더로만 보낸다."""
+
+    def __init__(self, client_id: str, client_secret: str, base_url: str, timeout: float):
+        self._headers = {"X-Naver-Client-Id": client_id, "X-Naver-Client-Secret": client_secret}
+        self._base = base_url.rstrip("/")
+        self._timeout = timeout
+
+    def _get(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
+        data = _http_get_json(f"{self._base}/{path}?{urlencode(params)}", self._headers, self._timeout)
+        if not isinstance(data, dict) or not isinstance(data.get("items"), list):
+            raise ProviderError("네이버 응답 형식이 달라요")
+        return data
+
+    def search(self, query: str, start: int, display: int) -> SearchPage:
+        data = self._get("book.json", {"query": query, "start": start, "display": display})
+        total = data.get("total")
+        if not isinstance(total, int) or total < 0:
+            raise ProviderError("네이버 total이 없어요")
+        items = [b for b in (_naver_item(i) for i in data["items"]) if b is not None]
+        return SearchPage(items=items, total=total)
+
+    def lookup_isbn(self, isbn13: str) -> BookInfo | None:
+        data = self._get("book_adv.json", {"d_isbn": isbn13, "display": 10})
+        for item in data["items"]:
+            book = _naver_item(item)
+            if book is not None and book.isbn13 == isbn13:
+                return book
+        return None
+
+
+def _yn(value: Any) -> Literal["yes", "no"]:
+    if value == "Y":
+        return "yes"
+    if value == "N":
+        return "no"
+    raise ProviderError("Y/N이 아닌 값")  # 모르는 값을 no로 추측하지 않는다
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+class Data4LibraryClient:
+    """도서관 정보나루 Open API. 인증키는 쿼리(authKey)라 주소를 로그에 남기지 않는다."""
+
+    def __init__(self, auth_key: str, base_url: str, timeout: float):
+        self._key = auth_key
+        self._base = base_url.rstrip("/")
+        self._timeout = timeout
+
+    def _get(self, op: str, params: dict[str, Any]) -> dict[str, Any]:
+        query = urlencode({"authKey": self._key, "format": "json", **params})
+        data = _http_get_json(f"{self._base}/{op}?{query}", {}, self._timeout)
+        response = data.get("response") if isinstance(data, dict) else None
+        if not isinstance(response, dict) or "error" in response:
+            raise ProviderError("정보나루 응답 형식이 다르거나 오류")
+        return response
+
+    def book_exist(self, lib_code: str, isbn13: str) -> HoldingResult:
+        result = self._get("bookExist", {"libCode": lib_code, "isbn13": isbn13}).get("result")
+        if not isinstance(result, dict):
+            raise ProviderError("bookExist result가 없어요")
+        holding = _yn(result.get("hasBook"))
+        if holding == "no":
+            return HoldingResult(holding="no", loanable="no")
+        return HoldingResult(holding="yes", loanable=_yn(result.get("loanAvailable")))
+
+    def popular(self, lib_code: str | None, start: date, end: date, size: int) -> list[BookInfo]:
+        params: dict[str, Any] = {
+            "startDt": start.isoformat(),
+            "endDt": end.isoformat(),
+            "pageNo": 1,
+            "pageSize": size,
+        }
+        op = "loanItemSrch"
+        if lib_code is not None:
+            op, params["libCode"] = "loanItemSrchByLib", lib_code
+        docs = self._get(op, params).get("docs")
+        if not isinstance(docs, list):
+            raise ProviderError("docs가 없어요")
+        books: list[BookInfo] = []
+        for entry in docs:
+            doc = entry.get("doc") if isinstance(entry, dict) else None
+            if not isinstance(doc, dict):
+                continue
+            isbn13 = normalize_isbn(doc.get("isbn13"))
+            title = _clean_text(doc.get("bookname"))
+            if isbn13 and title:
+                books.append(
+                    BookInfo(
+                        isbn13=isbn13,
+                        title=title,
+                        author=_clean_text(doc.get("authors")),
+                        publisher=_clean_text(doc.get("publisher")),
+                        cover_url=https_cover(doc.get("bookImageURL")),
+                    )
+                )
+        return books
+
+    def libraries(self, dtl_region: str, page: int, size: int) -> tuple[list[LibraryInfo], int]:
+        response = self._get(
+            "libSrch",
+            {"region": dtl_region[:2], "dtl_region": dtl_region, "pageNo": page, "pageSize": size},
+        )
+        libs, total = response.get("libs"), response.get("numFound")
+        if not isinstance(libs, list):
+            raise ProviderError("libs가 없어요")
+        result: list[LibraryInfo] = []
+        for entry in libs:
+            lib = entry.get("lib") if isinstance(entry, dict) else None
+            if not isinstance(lib, dict):
+                continue
+            code, name = _clean_text(lib.get("libCode")), _clean_text(lib.get("libName"))
+            if not code or not name:
+                continue
+            lat, lng = _float_or_none(lib.get("latitude")), _float_or_none(lib.get("longitude"))
+            if lat is None or lng is None:
+                lat = lng = None  # 05 CHECK: 둘 다 있거나 둘 다 없음
+            result.append(
+                LibraryInfo(
+                    provider_lib_code=code,
+                    name=name,
+                    address=_clean_text(lib.get("address")),
+                    tel=_clean_text(lib.get("tel")),
+                    homepage=_clean_text(lib.get("homepage")),
+                    latitude=lat,
+                    longitude=lng,
+                    closed_text=_clean_text(lib.get("closed")),
+                    operating_time_text=_clean_text(lib.get("operatingTime")),
+                )
+            )
+        return result, total if isinstance(total, int) else len(result)
+
+
+def build_providers(settings: Settings) -> Providers:
+    """키가 있는 제공자만 만든다. 없으면 None(시드·캐시 Fallback)."""
+    books = None
+    if settings.naver_client_id and settings.naver_client_secret:
+        books = NaverBookClient(
+            settings.naver_client_id,
+            settings.naver_client_secret,
+            settings.naver_api_base_url,
+            policy.PROVIDER_TIMEOUT_SECONDS,
+        )
+    library_data = None
+    if settings.data4library_api_key:
+        library_data = Data4LibraryClient(
+            settings.data4library_api_key,
+            settings.data4library_api_base_url,
+            policy.PROVIDER_TIMEOUT_SECONDS,
+        )
+    return Providers(books=books, library_data=library_data)
+
+
+# ─────────────────────────── DB 행 ───────────────────────────
+
+
+@dataclass(frozen=True)
+class BookRecord:
+    id: int
+    isbn13: str
+    title: str
+    author: str | None
+    publisher: str | None
+    cover_url: str | None
+    source: str
+
+    def public(self) -> dict[str, Any]:
+        return {
+            "isbn13": self.isbn13,
+            "title": self.title,
+            "author": self.author,
+            "publisher": self.publisher,
+            "cover_url": self.cover_url,
+            "source": self.source,
+        }
+
+
+LIBRARY_COLUMNS = (
+    "id, provider_lib_code, name, address, tel, homepage, latitude, longitude, closed_text, "
+    "operating_time_text, region_code, dtl_region_code, isbn_search_url_template"
+)
+
+
+@dataclass(frozen=True)
+class LibraryRow:
+    id: int
+    provider_lib_code: str
+    name: str
+    address: str | None
+    tel: str | None
+    homepage: str | None
+    latitude: float | None
+    longitude: float | None
+    closed_text: str | None
+    operating_time_text: str | None
+    region_code: str | None
+    dtl_region_code: str | None
+    isbn_search_url_template: str | None
+
+
+def live_check_link(library: LibraryRow, isbn13: str) -> tuple[str | None, str | None]:
+    """"실시간 확인" 주소(02 §9 Q-48): 템플릿 → 홈페이지 → 없음(버튼 숨김). (주소, 종류)."""
+    template = library.isbn_search_url_template
+    if template and "{isbn13}" in template and template.startswith(("https://", "http://")):
+        return template.replace("{isbn13}", isbn13), "isbn_search"
+    if library.homepage and library.homepage.startswith(("https://", "http://")):
+        return library.homepage, "homepage"
+    return None, None
+
+
+def _book_row(row: Any) -> BookRecord:
+    return BookRecord(
+        id=int(row.id),
+        isbn13=row.isbn13,
+        title=row.title,
+        author=row.author,
+        publisher=row.publisher,
+        cover_url=row.cover_url,
+        source=row.source,
+    )
+
+
+def _library_row(row: Any) -> LibraryRow:
+    return LibraryRow(**{k: getattr(row, k) for k in LibraryRow.__dataclass_fields__})
+
+
+def select_book(conn: Connection, isbn13: str) -> BookRecord | None:
+    row = conn.execute(
+        text("SELECT id, isbn13, title, author, publisher, cover_url, source FROM books WHERE isbn13 = :i"),
+        {"i": isbn13},
+    ).first()
+    return _book_row(row) if row else None
+
+
+def upsert_books(
+    conn: Connection, infos: Iterable[BookInfo], source: str, fetched_at: datetime, *, overwrite: bool
+) -> list[BookRecord]:
+    """제공자가 준 서지를 books에 넣는다(순서 보존, 같은 ISBN은 한 번).
+
+    overwrite=False(인기 도서)는 이미 있는 서지를 덮지 않고 빈 표지만 채운다.
+    """
+    seen: set[str] = set()
+    records: list[BookRecord] = []
+    update = (
+        "title = EXCLUDED.title, author = EXCLUDED.author, publisher = EXCLUDED.publisher, "
+        "cover_url = COALESCE(EXCLUDED.cover_url, books.cover_url), source = EXCLUDED.source, "
+        "fetched_at = EXCLUDED.fetched_at"
+        if overwrite
+        else "cover_url = COALESCE(books.cover_url, EXCLUDED.cover_url)"
+    )
+    for info in infos:
+        if info.isbn13 in seen:
+            continue
+        seen.add(info.isbn13)
+        row = conn.execute(
+            text(
+                f"""
+                INSERT INTO books (isbn13, title, author, publisher, cover_url, source, fetched_at)
+                VALUES (:isbn13, :title, :author, :publisher, :cover_url, :source, :fetched_at)
+                ON CONFLICT (isbn13) DO UPDATE SET {update}
+                RETURNING id, isbn13, title, author, publisher, cover_url, source
+                """
+            ),
+            {
+                "isbn13": info.isbn13,
+                "title": info.title,
+                "author": info.author,
+                "publisher": info.publisher,
+                "cover_url": info.cover_url,
+                "source": source,
+                "fetched_at": fetched_at,
+            },
+        ).one()
+        records.append(_book_row(row))
+    return records
+
+
+def _like_pattern(query: str) -> str:
+    escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def search_cached_books(conn: Connection, query: str, start: int, size: int) -> tuple[list[BookRecord], bool]:
+    rows = conn.execute(
+        text(
+            """
+            SELECT id, isbn13, title, author, publisher, cover_url, source FROM books
+            WHERE isbn13 IS NOT NULL
+              AND (title ILIKE :p OR author ILIKE :p OR isbn13 = :q)
+            ORDER BY title COLLATE "C", id
+            OFFSET :offset LIMIT :limit
+            """
+        ),
+        {"p": _like_pattern(query), "q": query, "offset": start - 1, "limit": size + 1},
+    ).all()
+    return [_book_row(r) for r in rows[:size]], len(rows) > size
+
+
+def reserve_provider_call(conn: Connection, provider: str, usage_date: date, limit: int) -> bool:
+    """호출 전에 원자적으로 +1한다. 상한에 닿았으면 행을 바꾸지 않고 False(05 §11.2)."""
+    if limit <= 0:
+        return False
+    row = conn.execute(
+        text(
+            """
+            INSERT INTO provider_daily_usage (provider, usage_date, call_count)
+            VALUES (:provider, :usage_date, 1)
+            ON CONFLICT (provider, usage_date) DO UPDATE
+                SET call_count = provider_daily_usage.call_count + 1
+                WHERE provider_daily_usage.call_count < :limit
+            RETURNING call_count
+            """
+        ),
+        {"provider": provider, "usage_date": usage_date, "limit": limit},
+    ).first()
+    return row is not None
+
+
+def get_library(conn: Connection, library_id: int) -> LibraryRow | None:
+    row = conn.execute(
+        text(f"SELECT {LIBRARY_COLUMNS} FROM libraries WHERE id = :id"), {"id": library_id}
+    ).first()
+    return _library_row(row) if row else None
+
+
+def libraries_in_region(conn: Connection, dtl_region_code: str) -> list[LibraryRow]:
+    rows = conn.execute(
+        text(f"SELECT {LIBRARY_COLUMNS} FROM libraries WHERE dtl_region_code = :c ORDER BY name COLLATE \"C\", id"),
+        {"c": dtl_region_code},
+    ).all()
+    return [_library_row(r) for r in rows]
+
+
+EARTH_RADIUS_KM = 6371.0088
+
+
+def distance_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """직선(대권) 거리(2026-11-13 `확정`: 직선거리)."""
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = p2 - p1, math.radians(lng2 - lng1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * EARTH_RADIUS_KM * math.asin(min(1.0, math.sqrt(a)))
+
+
+def libraries_nearby(
+    conn: Connection, lat: float, lng: float, radius_km: float
+) -> list[tuple[LibraryRow, float]]:
+    """반경 안 도서관을 거리순(같으면 id순)으로. 좌표 없는 도서관은 뺀다(거리 계산 불가)."""
+    dlat = radius_km / 110.574
+    dlng = radius_km / max(111.320 * math.cos(math.radians(lat)), 1e-6)
+    rows = conn.execute(
+        text(
+            f"""
+            SELECT {LIBRARY_COLUMNS} FROM libraries
+            WHERE latitude BETWEEN :lat_lo AND :lat_hi AND longitude BETWEEN :lng_lo AND :lng_hi
+            """
+        ),
+        {"lat_lo": lat - dlat, "lat_hi": lat + dlat, "lng_lo": lng - dlng, "lng_hi": lng + dlng},
+    ).all()
+    found = []
+    for row in rows:
+        lib = _library_row(row)
+        assert lib.latitude is not None and lib.longitude is not None
+        d = distance_km(lat, lng, lib.latitude, lib.longitude)
+        if d <= radius_km:
+            found.append((lib, d))
+    found.sort(key=lambda pair: (pair[1], pair[0].id))
+    return found
+
+
+# ─────────────────────────── 결과 모양 ───────────────────────────
+
+
+@dataclass(frozen=True)
+class SearchResult:
+    items: list[BookRecord]
+    next_start: int | None
+    source: Literal["naver", "cache"]
+    fallback_reason: FallbackReason | None
+
+
+@dataclass(frozen=True)
+class PopularResult:
+    scope: Literal["national", "library"]
+    library_id: int | None
+    period_label: str
+    books: list[BookRecord]
+    fetched_at: datetime
+    stale: bool
+    fallback_reason: FallbackReason | None
+
+
+@dataclass(frozen=True)
+class AvailabilityItem:
+    library: LibraryRow
+    holding: Tri
+    loanable: Tri
+    basis: Literal["today", "stale", "none"]
+    source: str | None = None
+    observed_at: datetime | None = None
+    data_date: date | None = None
+    data_date_assumed: bool = False
+    fallback_reason: FallbackReason | None = None
+
+
+@dataclass
+class _Observation:
+    holding: Tri
+    loanable: Tri
+    observed_on: date
+    observed_at: datetime
+    data_date: date | None
+    data_date_assumed: bool
+    source: str
+
+
+@dataclass
+class _Fetch:
+    result: HoldingResult | None = None
+    reason: FallbackReason | None = None
+    observed_at: datetime | None = None
+
+
+# ─────────────────────────── 엔진 ───────────────────────────
+
+
+class ProviderEngine:
+    def __init__(
+        self,
+        engine: Engine,
+        providers: Providers,
+        now_fn: Callable[[], datetime] = now_kst,
+    ) -> None:
+        self.engine = engine
+        self.providers = providers
+        self.now_fn = now_fn
+
+    async def _db(self, fn: Callable[[Connection], T]) -> T:
+        return await run_db(self.engine, fn)
+
+    async def _guarded_call(self, provider: str, limit: int, fn: Callable[[], T]) -> T:
+        """상한 예약(짧은 트랜잭션) 뒤 트랜잭션 밖에서 호출한다."""
+        usage_date = today_kst(self.now_fn())
+        if not await self._db(lambda c: reserve_provider_call(c, provider, usage_date, limit)):
+            raise ProviderLimitReached(provider)
+        try:
+            return await asyncio.to_thread(fn)
+        except ProviderError:
+            logger.warning("외부 제공자 실패: %s", provider)
+            raise
+        except Exception as exc:  # 파서 버그도 unknown으로(no로 단정하지 않음). 원인은 로그에만
+            logger.exception("외부 제공자 처리 오류: %s", provider)
+            raise ProviderError(provider) from exc
+
+    # ── 도서(06 #7·#8) ──
+
+    async def search_books(self, query: str, start: int) -> SearchResult:
+        size = policy.SEARCH_PAGE_SIZE
+        provider = self.providers.books
+        reason: FallbackReason
+        if provider is None:
+            reason = "not_configured"
+        else:
+            try:
+                page = await self._guarded_call(
+                    "naver", policy.NAVER_DAILY_LIMIT, lambda: provider.search(query, start, size)
+                )
+            except ProviderLimitReached:
+                reason = "limit"
+            except ProviderError:
+                reason = "provider_error"
+            else:
+                fetched_at = self.now_fn()
+                records = await self._db(
+                    lambda c: upsert_books(c, page.items, "naver", fetched_at, overwrite=True)
+                )
+                following = start + size
+                has_more = following <= min(page.total, policy.SEARCH_MAX_START)
+                return SearchResult(records, following if has_more else None, "naver", None)
+
+        records, has_more = await self._db(lambda c: search_cached_books(c, query, start, size))
+        if not records and reason == "limit":
+            raise ApiError(429, "PROVIDER_LIMIT", MSG_PROVIDER_LIMIT)
+        if not records and reason == "provider_error":
+            raise ApiError(503, "PROVIDER_UNAVAILABLE", MSG_PROVIDER_UNAVAILABLE)
+        return SearchResult(records, start + size if has_more else None, "cache", reason)
+
+    async def get_book(self, isbn13: str) -> BookRecord:
+        """DB에 있으면 그대로, 없으면 네이버에서 찾아 저장한다. 키가 없으면 시드·캐시에 없는 책은 404."""
+        record = await self._db(lambda c: select_book(c, isbn13))
+        if record is not None:
+            return record
+        provider = self.providers.books
+        if provider is None:
+            raise ApiError(404, "NOT_FOUND", MSG_NOT_FOUND)
+        try:
+            info = await self._guarded_call(
+                "naver", policy.NAVER_DAILY_LIMIT, lambda: provider.lookup_isbn(isbn13)
+            )
+        except ProviderLimitReached:
+            raise ApiError(429, "PROVIDER_LIMIT", MSG_PROVIDER_LIMIT) from None
+        except ProviderError:
+            raise ApiError(503, "PROVIDER_UNAVAILABLE", MSG_PROVIDER_UNAVAILABLE) from None
+        if info is None:
+            raise ApiError(404, "NOT_FOUND", MSG_NOT_FOUND)
+        fetched_at = self.now_fn()
+        return (await self._db(lambda c: upsert_books(c, [info], "naver", fetched_at, overwrite=True)))[0]
+
+    async def find_book_quietly(self, isbn13: str) -> BookRecord | None:
+        """소장 조회용: 서지를 못 찾아도 오류로 끊지 않는다(관측 저장만 못 함)."""
+        try:
+            return await self.get_book(isbn13)
+        except ApiError:
+            return None
+
+    # ── 인기 도서(06 #9) ──
+
+    def _popular_is_fresh(self, scope: str, fetched_at: datetime, now: datetime) -> bool:
+        if scope == "national":
+            return today_kst(fetched_at) == today_kst(now)  # 전국은 하루 한 번(서울 날짜)
+        return now - fetched_at < policy.POPULAR_LIBRARY_TTL
+
+    async def popular_books(self, library: LibraryRow | None) -> PopularResult:
+        """도서관 → (데이터 없으면) 전국 순. 아무것도 없으면 429(상한) 또는 503."""
+        reasons: list[FallbackReason] = []
+        if library is not None:
+            result = await self._popular_scope("library", library, reasons)
+            if result is not None:
+                return result
+        result = await self._popular_scope("national", None, reasons)
+        if result is not None:
+            if library is not None and result.fallback_reason is None:
+                # 도서관 데이터가 없어 전국으로 대체했다는 사실을 남긴다(02 LIB-01 "기준을 표시")
+                result = PopularResult(**{**result.__dict__, "fallback_reason": reasons[0]})
+            return result
+        if "limit" in reasons:
+            raise ApiError(429, "PROVIDER_LIMIT", MSG_PROVIDER_LIMIT)
+        raise ApiError(503, "PROVIDER_UNAVAILABLE", MSG_PROVIDER_UNAVAILABLE)
+
+    async def _popular_scope(
+        self,
+        scope: Literal["national", "library"],
+        library: LibraryRow | None,
+        reasons: list[FallbackReason],
+    ) -> PopularResult | None:
+        library_id = library.id if library else None
+        now = self.now_fn()
+        cached = await self._db(lambda c: _read_popular(c, scope, library_id))
+        if cached is not None and self._popular_is_fresh(scope, cached.fetched_at, now):
+            return cached
+
+        provider = self.providers.library_data
+        reason: FallbackReason
+        if provider is None:
+            reason = "not_configured"
+        else:
+            end = today_kst(now) - timedelta(days=1)
+            start = end - timedelta(days=policy.POPULAR_PERIOD_DAYS - 1)
+            code = library.provider_lib_code if library else None
+            try:
+                infos = await self._guarded_call(
+                    "data4library",
+                    policy.DATA4LIBRARY_DAILY_LIMIT,
+                    lambda: provider.popular(code, start, end, policy.POPULAR_SIZE),
+                )
+            except ProviderLimitReached:
+                reason = "limit"
+            except ProviderError:
+                reason = "provider_error"
+            else:
+                if infos:
+                    label = f"{library.name if library else '전국'} · 최근 {policy.POPULAR_PERIOD_DAYS}일"
+                    fetched_at = self.now_fn()
+                    return await self._db(
+                        lambda c: _store_popular(c, scope, library_id, infos, label, fetched_at)
+                    )
+                reason = "no_data"
+        reasons.append(reason)
+        if cached is not None:
+            return PopularResult(**{**cached.__dict__, "stale": True, "fallback_reason": reason})
+        return None
+
+    # ── 소장·대출 가능(06 #12~#14) ──
+
+    async def availability(self, isbn13: str, libraries: Sequence[LibraryRow]) -> list[AvailabilityItem]:
+        if not libraries:
+            return []
+        book = await self.find_book_quietly(isbn13)
+        now = self.now_fn()
+        today = today_kst(now)
+        lib_ids = [lib.id for lib in libraries]
+        latest: dict[int, _Observation] = (
+            await self._db(lambda c: _latest_observations(c, book.id, lib_ids)) if book else {}
+        )
+
+        need = [lib for lib in libraries if not (lib.id in latest and latest[lib.id].observed_on == today)]
+        fetched: dict[int, _Fetch] = {}
+        provider = self.providers.library_data
+        if provider is None:
+            fetched = {lib.id: _Fetch(reason="not_configured") for lib in need}
+        else:
+            cap = policy.AVAILABILITY_MAX_CALLS_PER_REQUEST
+            for lib in need[cap:]:
+                fetched[lib.id] = _Fetch(reason="limit")
+            semaphore = asyncio.Semaphore(policy.AVAILABILITY_MAX_CONCURRENCY)
+
+            async def _one(lib: LibraryRow) -> None:
+                async with semaphore:
+                    try:
+                        result = await self._guarded_call(
+                            "data4library",
+                            policy.DATA4LIBRARY_DAILY_LIMIT,
+                            lambda: provider.book_exist(lib.provider_lib_code, isbn13),
+                        )
+                    except ProviderLimitReached:
+                        fetched[lib.id] = _Fetch(reason="limit")
+                    except ProviderError:
+                        fetched[lib.id] = _Fetch(reason="provider_error")
+                    else:
+                        fetched[lib.id] = _Fetch(result=result, observed_at=self.now_fn())
+
+            await asyncio.gather(*(_one(lib) for lib in need[:cap]))
+
+        successes = {lid: f for lid, f in fetched.items() if f.result is not None}
+        if book is not None and successes:
+            await self._db(lambda c: _store_observations(c, book.id, today, successes))
+
+        items: list[AvailabilityItem] = []
+        for lib in libraries:
+            fetch = fetched.get(lib.id)
+            if fetch is None:  # 오늘 캐시
+                obs = latest[lib.id]
+                items.append(_from_observation(lib, obs, "today", None))
+            elif fetch.result is not None:
+                assert fetch.observed_at is not None
+                data_date, assumed = _data_date(fetch.result.data_date, today)
+                items.append(
+                    AvailabilityItem(
+                        library=lib,
+                        holding=fetch.result.holding,
+                        loanable=fetch.result.loanable,
+                        basis="today",
+                        source="data4library",
+                        observed_at=fetch.observed_at,
+                        data_date=data_date,
+                        data_date_assumed=assumed,
+                    )
+                )
+            elif lib.id in latest:  # 새로 못 받았지만 예전 관측이 있다 → 시각과 함께 구별(AC-UNKNOWN)
+                items.append(_from_observation(lib, latest[lib.id], "stale", fetch.reason))
+            else:
+                items.append(
+                    AvailabilityItem(
+                        library=lib, holding="unknown", loanable="unknown", basis="none",
+                        fallback_reason=fetch.reason,
+                    )
+                )
+        if all(i.basis == "none" and i.fallback_reason == "limit" for i in items):
+            raise ApiError(429, "PROVIDER_LIMIT", MSG_PROVIDER_LIMIT)
+        return items
+
+    # ── 도서관 목록 갱신(정보나루 libSrch, 배치·CLI용) ──
+
+    async def sync_libraries(self, dtl_region_codes: Sequence[str], page_size: int = 100) -> dict[str, int]:
+        """시군구별로 도서관 목록을 받아 해시가 달라진 곳만 고친다(05 §3.1 libraries). 요청 경로에서 부르지 않는다."""
+        provider = self.providers.library_data
+        if provider is None:
+            raise ApiError(503, "PROVIDER_UNAVAILABLE", MSG_PROVIDER_UNAVAILABLE, "DATA4LIBRARY_API_KEY")
+        counts = {"inserted": 0, "updated": 0, "unchanged": 0}
+        for code in dtl_region_codes:
+            page = 1
+            while True:
+                try:
+                    libs, total = await self._guarded_call(
+                        "data4library",
+                        policy.DATA4LIBRARY_DAILY_LIMIT,
+                        lambda: provider.libraries(code, page, page_size),
+                    )
+                except ProviderLimitReached:
+                    raise ApiError(429, "PROVIDER_LIMIT", MSG_PROVIDER_LIMIT) from None
+                except ProviderError:
+                    raise ApiError(503, "PROVIDER_UNAVAILABLE", MSG_PROVIDER_UNAVAILABLE) from None
+                synced_at = self.now_fn()
+                for key, value in (await self._db(lambda c: _store_libraries(c, code, libs, synced_at))).items():
+                    counts[key] += value
+                if not libs or page * page_size >= total:
+                    break
+                page += 1
+        return counts
+
+
+def _data_date(provided: date | None, today: date) -> tuple[date, bool]:
+    """기준일이 없으면 조회일 전날로 두고 추정했다고 표시한다(05 §3.1, 02 LIB-03)."""
+    if provided is not None:
+        return provided, False
+    return today - timedelta(days=1), True
+
+
+def _from_observation(
+    lib: LibraryRow, obs: _Observation, basis: Literal["today", "stale"], reason: FallbackReason | None
+) -> AvailabilityItem:
+    return AvailabilityItem(
+        library=lib,
+        holding=obs.holding,
+        loanable=obs.loanable,
+        basis=basis,
+        source=obs.source,
+        observed_at=obs.observed_at,
+        data_date=obs.data_date,
+        data_date_assumed=obs.data_date_assumed,
+        fallback_reason=reason,
+    )
+
+
+def _latest_observations(conn: Connection, book_id: int, library_ids: list[int]) -> dict[int, _Observation]:
+    """도서관마다 가장 최근 관측(unknown 제외 — unknown은 캐시로 치지 않는다, 05 §3.1)."""
+    rows = conn.execute(
+        text(
+            """
+            SELECT DISTINCT ON (library_id)
+                library_id, holding, loanable, observed_on, observed_at, data_date, data_date_assumed, source
+            FROM availability_observations
+            WHERE book_id = :book_id AND library_id = ANY(:ids) AND holding <> 'unknown'
+            ORDER BY library_id, observed_on DESC
+            """
+        ),
+        {"book_id": book_id, "ids": library_ids},
+    ).all()
+    return {
+        int(r.library_id): _Observation(
+            holding=r.holding,
+            loanable=r.loanable,
+            observed_on=r.observed_on,
+            observed_at=r.observed_at,
+            data_date=r.data_date,
+            data_date_assumed=r.data_date_assumed,
+            source=r.source,
+        )
+        for r in rows
+    }
+
+
+def _store_observations(conn: Connection, book_id: int, today: date, successes: dict[int, _Fetch]) -> None:
+    for library_id, fetch in successes.items():
+        assert fetch.result is not None
+        data_date, assumed = _data_date(fetch.result.data_date, today)
+        conn.execute(
+            text(
+                """
+                INSERT INTO availability_observations (
+                    library_id, book_id, observed_on, holding, loanable,
+                    data_date, data_date_assumed, observed_at, source
+                ) VALUES (
+                    :library_id, :book_id, :observed_on, :holding, :loanable,
+                    :data_date, :assumed, :observed_at, 'data4library'
+                )
+                ON CONFLICT (library_id, book_id, observed_on) DO UPDATE SET
+                    holding = EXCLUDED.holding,
+                    loanable = EXCLUDED.loanable,
+                    data_date = EXCLUDED.data_date,
+                    data_date_assumed = EXCLUDED.data_date_assumed,
+                    observed_at = EXCLUDED.observed_at,
+                    source = EXCLUDED.source
+                """
+            ),
+            {
+                "library_id": library_id,
+                "book_id": book_id,
+                "observed_on": today,
+                "holding": fetch.result.holding,
+                "loanable": fetch.result.loanable,
+                "data_date": data_date,
+                "assumed": assumed,
+                "observed_at": fetch.observed_at,
+            },
+        )
+
+
+def _read_popular(conn: Connection, scope: str, library_id: int | None) -> PopularResult | None:
+    rows = conn.execute(
+        text(
+            """
+            SELECT b.id, b.isbn13, b.title, b.author, b.publisher, b.cover_url, b.source,
+                   p.period_label, p.fetched_at
+            FROM popular_books_cache p JOIN books b ON b.id = p.book_id
+            WHERE p.scope = :scope AND p.library_id IS NOT DISTINCT FROM :library_id
+              AND b.isbn13 IS NOT NULL
+            ORDER BY p.rank
+            """
+        ),
+        {"scope": scope, "library_id": library_id},
+    ).all()
+    if not rows:
+        return None
+    return PopularResult(
+        scope=scope,  # type: ignore[arg-type]
+        library_id=library_id,
+        period_label=rows[0].period_label,
+        books=[_book_row(r) for r in rows][: policy.POPULAR_SIZE],
+        fetched_at=min(r.fetched_at for r in rows),
+        stale=False,
+        fallback_reason=None,
+    )
+
+
+def _store_popular(
+    conn: Connection,
+    scope: Literal["national", "library"],
+    library_id: int | None,
+    infos: list[BookInfo],
+    label: str,
+    fetched_at: datetime,
+) -> PopularResult:
+    # 같은 범위를 동시에 갱신하면 DELETE·INSERT가 엇갈려 순위 UNIQUE에 걸린다 → 범위별로 직렬화
+    conn.execute(text("SELECT pg_advisory_xact_lock(hashtext(:k))"), {"k": f"popular:{scope}:{library_id}"})
+    records = upsert_books(conn, infos[: policy.POPULAR_SIZE], "data4library", fetched_at, overwrite=False)
+    conn.execute(
+        text("DELETE FROM popular_books_cache WHERE scope = :scope AND library_id IS NOT DISTINCT FROM :lid"),
+        {"scope": scope, "lid": library_id},
+    )
+    for rank, record in enumerate(records, start=1):
+        conn.execute(
+            text(
+                """
+                INSERT INTO popular_books_cache (scope, library_id, rank, book_id, period_label, fetched_at)
+                VALUES (:scope, :lid, :rank, :book_id, :label, :fetched_at)
+                """
+            ),
+            {
+                "scope": scope,
+                "lid": library_id,
+                "rank": rank,
+                "book_id": record.id,
+                "label": label,
+                "fetched_at": fetched_at,
+            },
+        )
+    return PopularResult(scope, library_id, label, records, fetched_at, False, None)
+
+
+def library_content_hash(info: LibraryInfo) -> str:
+    raw = json.dumps(info.__dict__, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _store_libraries(
+    conn: Connection, dtl_region_code: str, libs: list[LibraryInfo], synced_at: datetime
+) -> dict[str, int]:
+    """새 도서관은 넣고, 해시가 다른 곳만 고치고, 받은 곳은 모두 synced_at을 갱신한다.
+
+    `isbn_search_url_template`·룩(M2)은 제공자가 주지 않으므로 건드리지 않는다.
+    """
+    counts = {"inserted": 0, "updated": 0, "unchanged": 0}
+    for info in libs:
+        params = {
+            **info.__dict__,
+            "region_code": dtl_region_code[:2],
+            "dtl_region_code": dtl_region_code,
+            "content_hash": library_content_hash(info),
+            "synced_at": synced_at,
+        }
+        row = conn.execute(
+            text(
+                """
+                INSERT INTO libraries (
+                    provider_lib_code, name, address, tel, homepage, latitude, longitude,
+                    closed_text, operating_time_text, region_code, dtl_region_code, content_hash, synced_at
+                ) VALUES (
+                    :provider_lib_code, :name, :address, :tel, :homepage, :latitude, :longitude,
+                    :closed_text, :operating_time_text, :region_code, :dtl_region_code, :content_hash, :synced_at
+                )
+                ON CONFLICT (provider_lib_code) DO UPDATE SET
+                    name = EXCLUDED.name, address = EXCLUDED.address, tel = EXCLUDED.tel,
+                    homepage = EXCLUDED.homepage, latitude = EXCLUDED.latitude,
+                    longitude = EXCLUDED.longitude, closed_text = EXCLUDED.closed_text,
+                    operating_time_text = EXCLUDED.operating_time_text,
+                    region_code = EXCLUDED.region_code, dtl_region_code = EXCLUDED.dtl_region_code,
+                    content_hash = EXCLUDED.content_hash, synced_at = EXCLUDED.synced_at
+                WHERE libraries.content_hash <> EXCLUDED.content_hash
+                RETURNING (xmax = 0) AS inserted
+                """
+            ),
+            params,
+        ).first()
+        if row is None:
+            conn.execute(
+                text("UPDATE libraries SET synced_at = :s WHERE provider_lib_code = :c"),
+                {"s": synced_at, "c": info.provider_lib_code},
+            )
+            counts["unchanged"] += 1
+        elif row.inserted:
+            counts["inserted"] += 1
+        else:
+            counts["updated"] += 1
+    return counts
+
+
+# ─────────────────────────── CLI ───────────────────────────
+
+
+def _main(argv: list[str]) -> int:
+    """`python -m app.services.provider_engine seed` | `sync-libraries <시군구 코드>...`"""
+    from sqlalchemy import create_engine
+
+    from app.seed import seed_reference_data
+    from app.settings import get_settings
+
+    if not argv or argv[0] not in {"seed", "sync-libraries"}:
+        print(_main.__doc__)
+        return 2
+    settings = get_settings()
+    engine = create_engine(settings.database_url)
+    try:
+        if argv[0] == "seed":
+            print(asyncio.run(run_db(engine, seed_reference_data)))
+        else:
+            codes = argv[1:]
+            if not codes:
+                print("시군구 코드(예: 11110)를 하나 이상 주세요")
+                return 2
+            print(asyncio.run(ProviderEngine(engine, build_providers(settings)).sync_libraries(codes)))
+    finally:
+        engine.dispose()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main(sys.argv[1:]))

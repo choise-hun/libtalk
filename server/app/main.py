@@ -15,6 +15,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.auth import JwksClient, build_jwks_client, router as auth_router
 from app.common import ApiError, error_response, now_kst
 from app.routers.me import router as me_router
+from app.services.provider_engine import ProviderEngine, Providers, build_providers
 from app.settings import CORS_ENVS, LOCAL_ORIGIN_REGEX, Settings, get_settings
 
 logger = logging.getLogger("localone")
@@ -27,7 +28,9 @@ HTTP_ERRORS = {
 
 
 def create_app(
-    settings: Settings | None = None, jwks_client: JwksClient | None = None
+    settings: Settings | None = None,
+    jwks_client: JwksClient | None = None,
+    providers: Providers | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     # psycopg 비동기는 Windows의 uvicorn 기본 루프(Proactor)에서 동작하지 않아,
@@ -58,6 +61,13 @@ def create_app(
     app.include_router(auth_router)
     app.include_router(me_router)
     # ── [/auth-D] ──
+
+    # ── [lib-0-D] 조회 엔진: 시험은 providers로 가짜 제공자를 넣는다(CI는 외부 네트워크 없음, H-ARCH-07) ──
+    # APP_ENV=test는 .env에 키가 있어도 실제 제공자를 만들지 않는다(시험이 외부로 나가지 않게)
+    if providers is None:
+        providers = Providers() if settings.app_env == "test" else build_providers(settings)
+    app.state.provider_engine = ProviderEngine(engine, providers)
+    # ── [/lib-0-D] ──
 
     if settings.app_env in CORS_ENVS:
         # 웹 스모크(브라우저)가 로컬 서버를 부를 수 있게 한다. 인증은 헤더(JWT)라 쿠키 자격 증명은 허용하지 않는다
